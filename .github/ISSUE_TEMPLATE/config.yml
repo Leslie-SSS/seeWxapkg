@@ -1,0 +1,27 @@
+---
+name: 配置文件
+about: 请填写此配置以帮助我们更好地理解问题
+title: '[Config] '
+labels: ['config']
+assignees: ''
+
+---
+
+**运行环境**
+- 操作系统: [例如 Windows 11, macOS 14, Ubuntu 22.04]
+- Go 版本: [运行 `go version`]
+- Node.js 版本: [运行 `node -v`]
+- Docker 版本: [运行 `docker -v`]
+- 部署方式: [Docker Compose / 本地开发]
+
+**问题描述**
+请描述你遇到的问题。
+
+**复现步骤**
+请提供复现问题的详细步骤。
+
+**日志信息**
+请粘贴相关的日志输出（如果有）。
+
+**截图**
+如果可以，请添加截图来帮助解释问题。
