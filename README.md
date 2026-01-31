@@ -1,14 +1,10 @@
-# <img src="https://img.shields.io/badge/SeeWxapkg-1.0.0-brightgreen" alt="Version"> <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"> <img src="https://img.shields.io/badge/docker-available-blue.svg" alt="Docker"> <img src="https://img.shields.io/badge/Go-1.23+-00ADD8.svg" alt="Go"> <img src="img.shields.io/badge/React-18+-61DAFB.svg" alt="React">
-
 # See Wxapkg
 
 <div align="center">
-
+  
 极简实用的微信小程序反编译 Web 工具
 
-[功能特性](#-功能特性) • [快速开始](#-快速开始) • [部署](#-部署) • [API](#-api-文档) • [贡献](#贡献指南)
-
-[在线演示](#) • [文档](#) • [更新日志](CHANGELOG.md)
+[功能特性](#-功能特性) • [快速开始](#-快速开始) • [部署](#-部署) • [API](#-api-文档)
 
 </div>
 
@@ -37,8 +33,8 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/keepbuild/seewxapkg.git
-cd seewxapkg
+git clone https://github.com/Leslie-SSS/seeWxapkg.git
+cd seeWxapkg
 
 # 启动服务
 docker-compose up -d
@@ -157,8 +153,7 @@ SSE 进度推送事件
 
 1. **导出 .wxapkg 文件**
    - macOS: `~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/Applet/packages`
-   - Windows: `C:\Users\{用户名}\Documents\WeChat Files\Applet\{AppID}\`
-
+   - Windows: `C:\Users\{用户名}\Documents\WeChat Files\Applet\{AppID}`
 2. **上传文件** - 拖放到上传区域
 
 3. **填写 AppID**（如需解密）
@@ -167,11 +162,9 @@ SSE 进度推送事件
 
 5. **下载结果** - 点击下载按钮获取 ZIP 包
 
-## 贡献指南
+## 在线体验
 
-欢迎提交 Issue 和 Pull Request！
-
-请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详情。
+- **生产环境**: https://seewxapkg.keepbuild.cn
 
 ## 许可证
 
@@ -181,15 +174,10 @@ SSE 进度推送事件
 
 本项目仅用于学习和研究目的。请遵守相关法律法规，不得用于非法用途。
 
-## 致谢
-
-- 感始 wxapkg 解密算法参考了 [wux1an/wxapkg](https://github.com/wux1an/wxapkg) 项目
-- UI 设计灵感来源于现代开发者工具
-
 ---
 
 <div align="center">
 
 **[⭐ Star](../../stargazers)** if this helps you!
 
-Made with ❤️ by [KeepBuild](https://github.com/keepbuild)
+</div>
