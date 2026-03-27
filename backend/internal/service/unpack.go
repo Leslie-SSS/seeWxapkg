@@ -12,9 +12,46 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/keepbuild/seewxapkg/internal/beautify"
 	"github.com/keepbuild/seewxapkg/internal/model"
 	"github.com/tidwall/pretty"
 )
+
+// Global beautify service instance
+var beautifyService *beautify.Service
+
+// InitBeautifyService initializes the global beautify service
+func InitBeautifyService(enabled bool, timeoutSeconds int, maxFileSize int, failureLimit int, deobfuscate bool) error {
+	if !enabled {
+		log.Println("[Unpack] Beautify service disabled")
+		beautifyService = nil
+		return nil
+	}
+
+	cfg := beautify.ConfigFromParams(enabled, timeoutSeconds, maxFileSize, failureLimit, deobfuscate)
+
+	var err error
+	beautifyService, err = beautify.NewService(cfg)
+	if err != nil {
+		log.Printf("[Unpack] Failed to initialize beautify service: %v", err)
+		// Don't fail startup, just disable beautification
+		beautifyService = nil
+		return nil
+	}
+
+	log.Printf("[Unpack] Beautify service initialized successfully")
+	return nil
+}
+
+// StopBeautifyService stops the beautify service
+func StopBeautifyService() {
+	if beautifyService != nil {
+		if err := beautifyService.Stop(); err != nil {
+			log.Printf("[Unpack] Error stopping beautify service: %v", err)
+		}
+		beautifyService = nil
+	}
+}
 
 // UnpackResult 解包结果
 type UnpackResult struct {
@@ -212,11 +249,24 @@ func beautifyContent(content []byte, filename string) []byte {
 	switch ext {
 	case ".json":
 		return beautifyJSON(content)
-	case ".js":
-		// 简单的 JS 格式化
+	case ".js", ".wxs":
+		// 使用新的美化服务
+		if beautifyService != nil {
+			return beautifyService.Beautify(content, filename)
+		}
 		return content
 	case ".wxml", ".html":
+		// 使用新的美化服务
+		if beautifyService != nil {
+			return beautifyService.Beautify(content, filename)
+		}
 		return beautifyHTML(content)
+	case ".wxss", ".css":
+		// 使用新的美化服务
+		if beautifyService != nil {
+			return beautifyService.Beautify(content, filename)
+		}
+		return content
 	default:
 		return content
 	}

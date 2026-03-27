@@ -93,10 +93,15 @@ services:
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
 | `SERVER_HOST` | `0.0.0.0` | 服务监听地址 |
-| `SERVER_PORT` | `8080` | 服务监听端口 |
+| `SERVER_PORT` | `9090` | 服务监听端口 |
 | `MAX_UPLOAD_SIZE` | `52428800` | 最大上传大小(字节) |
 | `TEMP_DIR` | `/tmp/seewxapkg` | 临时文件目录 |
 | `OUTPUT_DIR` | `/output` | 输出文件目录 |
+| `BEAUTIFY_ENABLED` | `false` | 是否启用 Node sidecar 美化服务 |
+| `BEAUTIFY_TIMEOUT` | `5` | 单文件美化超时(秒) |
+| `BEAUTIFY_MAX_FILE_SIZE` | `512000` | 单文件最大美化大小(字节) |
+| `BEAUTIFY_FAILURE_LIMIT` | `5` | 熔断前允许的连续失败次数 |
+| `DEOBFUSCATE_ENABLED` | `true` | 是否启用保守变量名反混淆 |
 
 ## API 文档
 
@@ -109,7 +114,7 @@ services:
 |------|------|------|------|
 | file | File | 是 | .wxapkg 文件 |
 | appId | string | 否 | 小程序 AppID，用于解密 |
-| beautify | boolean | 否 | 是否美化代码，默认 true |
+| beautify | boolean | 否 | 是否美化代码，默认 false |
 
 **响应**:
 ```json
@@ -140,7 +145,7 @@ SSE 进度推送事件
 ## 使用说明
 
 1. **导出 .wxapkg 文件**
-   - macOS: `~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/Applet/packages`
+   - macOS: `~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/{一串值}/applet/packages`
    - Windows: `C:\Users\{用户名}\Documents\WeChat Files\Applet\{AppID}`
 2. **上传文件** - 拖放到上传区域
 

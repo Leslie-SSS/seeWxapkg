@@ -60,6 +60,7 @@ coverage/
 
 # Go
 *.sum
+!backend/go.sum
 go.work
 
 # Testing

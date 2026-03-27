@@ -8,7 +8,7 @@ import { useSeeWxapkgUpload } from './hooks/useSeeWxapkgUpload';
 
 function App() {
   const [appId, setAppId] = useState('');
-  const [beautify, setBeautify] = useState(true);
+  const [beautify, setBeautify] = useState(false);  // 默认关闭美化
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const {
@@ -66,7 +66,7 @@ function App() {
                   <div className="flex-1 space-y-2">
                     <p>导出 <span className="font-mono text-slate-300">.wxapkg</span> 文件：</p>
                     <div className="space-y-1.5">
-                      <PathCopy platform="macOS" path="~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/Applet/packages" />
+                      <PathCopy platform="macOS" path="~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/{一串值}/applet/packages" />
                       <PathCopy platform="Windows" path="C:\Users\{用户名}\Documents\WeChat Files\Applet\{AppID}" />
                       <p className="text-xs text-slate-400">注：目录可能随微信版本变动，请自行确认最新路径</p>
                     </div>

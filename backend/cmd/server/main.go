@@ -3,16 +3,32 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/keepbuild/seewxapkg/internal/api"
 	"github.com/keepbuild/seewxapkg/internal/config"
+	"github.com/keepbuild/seewxapkg/internal/service"
 )
 
 func main() {
 	// 加载配置
 	cfg := config.Load()
+
+	// 初始化美化服务
+	if err := service.InitBeautifyService(
+		cfg.BeautifyEnabled,
+		cfg.BeautifyTimeout,
+		cfg.BeautifyMaxFileSize,
+		cfg.BeautifyFailureLimit,
+		cfg.DeobfuscateEnabled,
+	); err != nil {
+		log.Printf("Warning: Failed to initialize beautify service: %v", err)
+	}
+	defer service.StopBeautifyService()
 
 	// 设置 Gin 模式
 	gin.SetMode(gin.ReleaseMode)
@@ -33,6 +49,17 @@ func main() {
 	log.Printf("Max upload size: %d bytes", cfg.MaxUploadSize)
 	log.Printf("Temp dir: %s", cfg.TempDir)
 	log.Printf("Output dir: %s", cfg.OutputDir)
+	log.Printf("Beautify enabled: %v", cfg.BeautifyEnabled)
+
+	// Graceful shutdown
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Println("Shutting down server...")
+		service.StopBeautifyService()
+		os.Exit(0)
+	}()
 
 	if err := r.Run(addr); err != nil {
 		log.Fatal("Failed to start server:", err)

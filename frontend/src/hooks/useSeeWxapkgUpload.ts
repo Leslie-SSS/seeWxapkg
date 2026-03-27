@@ -24,7 +24,7 @@ export function useSeeWxapkgUpload() {
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
-  const upload = useCallback(async (file: File, appId?: string, beautify = true) => {
+  const upload = useCallback(async (file: File, appId?: string, beautify = false) => {
     // 清理之前的订阅
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
