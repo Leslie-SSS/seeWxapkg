@@ -5,6 +5,8 @@ interface ConfigPanelProps {
   setAppId: (value: string) => void;
   beautify: boolean;
   setBeautify: (value: boolean) => void;
+  decompile: boolean;
+  setDecompile: (value: boolean) => void;
   disabled?: boolean;
 }
 
@@ -13,6 +15,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
   setAppId,
   beautify,
   setBeautify,
+  decompile,
+  setDecompile,
   disabled = false,
 }) => {
   return (
@@ -76,6 +80,29 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
           <div className={`w-11 h-6 rounded-full transition-colors duration-200 ${beautify ? 'bg-emerald-500' : 'bg-slate-800'}`} />
           <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${beautify ? 'translate-x-5' : ''}`} />
           <span className="sr-only">切换代码美化</span>
+        </button>
+      </div>
+
+      {/* Decompile Toggle */}
+      <div className="flex items-center justify-between py-1">
+        <div>
+          <label htmlFor="decompile" className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+            深度反编译还原代码 (Experimental)
+          </label>
+          <p className="text-xs text-slate-600">重构 wxml/wxss 并拆分模块 (耗时较长)</p>
+        </div>
+        <button
+          id="decompile"
+          type="button"
+          role="switch"
+          aria-checked={decompile}
+          onClick={() => !disabled && setDecompile(!decompile)}
+          disabled={disabled}
+          className={`relative inline-flex items-center cursor-pointer ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          <div className={`w-11 h-6 rounded-full transition-colors duration-200 ${decompile ? 'bg-indigo-500' : 'bg-slate-800'}`} />
+          <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${decompile ? 'translate-x-5' : ''}`} />
+          <span className="sr-only">切换反编译选项</span>
         </button>
       </div>
     </div>

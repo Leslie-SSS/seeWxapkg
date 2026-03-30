@@ -9,6 +9,7 @@ import { useSeeWxapkgUpload } from './hooks/useSeeWxapkgUpload';
 function App() {
   const [appId, setAppId] = useState('');
   const [beautify, setBeautify] = useState(false);  // 默认关闭美化
+  const [decompile, setDecompile] = useState(false);  // 默认关闭反编译
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const {
@@ -98,6 +99,8 @@ function App() {
                 setAppId={setAppId}
                 beautify={beautify}
                 setBeautify={setBeautify}
+                decompile={decompile}
+                setDecompile={setDecompile}
               />
             </div>
           )}
@@ -105,7 +108,7 @@ function App() {
           {/* Start Button */}
           {!isComplete && !isUploading && selectedFile && (
             <button
-              onClick={() => upload(selectedFile, appId || undefined, beautify)}
+              onClick={() => upload(selectedFile, appId || undefined, beautify, decompile)}
               className="w-full inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-emerald-500 text-slate-950 rounded-lg font-medium transition-all duration-200 hover:bg-emerald-600 hover:shadow-lg hover:shadow-emerald-500/25 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 animate-fade-in"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -4,6 +4,7 @@ export interface CompileRequest {
   file: File;
   appId?: string;
   beautify?: boolean;
+  decompile?: boolean;
 }
 
 export interface ProgressEvent {
@@ -39,6 +40,9 @@ export class ApiClient {
     }
     if (request.beautify !== undefined) {
       formData.append('beautify', request.beautify.toString());
+    }
+    if (request.decompile !== undefined) {
+      formData.append('decompile', request.decompile.toString());
     }
 
     const response = await fetch(`${this.base}/compile`, {

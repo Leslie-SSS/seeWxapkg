@@ -21,6 +21,11 @@ COPY internal/beautify/package.json ./
 COPY internal/beautify/package-lock.json ./
 RUN npm ci --omit=dev
 
+WORKDIR /beautify/wxappUnpacker
+COPY internal/beautify/wxappUnpacker/package.json ./
+COPY internal/beautify/wxappUnpacker/package-lock.json ./
+RUN npm ci --omit=dev
+
 # 运行阶段
 FROM node:20-alpine
 
@@ -31,8 +36,10 @@ COPY --from=go-builder /app/server .
 
 # 复制 Node.js 美化服务
 COPY --from=node-builder /beautify/node_modules ./internal/beautify/node_modules
+COPY --from=node-builder /beautify/wxappUnpacker/node_modules ./internal/beautify/wxappUnpacker/node_modules
 COPY internal/beautify/core.js ./internal/beautify/
 COPY internal/beautify/plugins ./internal/beautify/plugins
+COPY internal/beautify/wxappUnpacker ./internal/beautify/wxappUnpacker
 COPY internal/beautify/server.js ./internal/beautify/
 COPY internal/beautify/package.json ./internal/beautify/
 COPY internal/beautify/package-lock.json ./internal/beautify/

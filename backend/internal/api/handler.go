@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -65,6 +66,7 @@ func (h *Handler) Compile(c *gin.Context) {
 	// 解析表单
 	appID := c.PostForm("appId")
 	beautify := c.PostForm("beautify") == "true"
+	decompile := c.PostForm("decompile") == "true"
 
 	// 验证 AppID 格式（如果提供）
 	if appID != "" && !appIdRegex.MatchString(appID) {
@@ -109,6 +111,7 @@ func (h *Handler) Compile(c *gin.Context) {
 		ID:        taskID,
 		AppID:     appID,
 		Beautify:  beautify,
+		Decompile: decompile,
 		Status:    "pending",
 		Progress:  0,
 		CreatedAt: time.Now(),
@@ -374,6 +377,50 @@ func (h *Handler) processFile(task *model.Task, fileHeader *multipart.FileHeader
 		log.Printf("[Task %s] Unpack failed: %v", task.ID, err)
 		h.sendError(eventChan, "解包失败: "+err.Error())
 		return
+	}
+
+	if task.Decompile {
+		eventChan <- model.ProgressEvent{
+			Type:    "progress",
+			Stage:   "decompiling",
+			Percent: 60,
+			Message: "正在深度反编译还原代码 (可能耗时较长)...",
+		}
+
+		wxapkgPath := filepath.Join(h.cfg.TempDir, task.ID+".wxapkg")
+		os.WriteFile(wxapkgPath, decryptedData, 0644)
+		defer os.Remove(wxapkgPath)
+
+		unpackerScript := "internal/beautify/wxappUnpacker/wuWxapkg.js"
+		if _, err := os.Stat(unpackerScript); os.IsNotExist(err) {
+			unpackerScript = "backend/internal/beautify/wxappUnpacker/wuWxapkg.js"
+		}
+		absUnpackerPath, _ := filepath.Abs(unpackerScript)
+		cmd := exec.Command("node", absUnpackerPath, wxapkgPath)
+		cmd.Dir = h.cfg.TempDir // 这样工作目录和文件系统匹配
+		
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("[Task %s] Decompile error: %v, output: %s", task.ID, err, string(output))
+			eventChan <- model.ProgressEvent{
+				Type:    "progress",
+				Stage:   "decompiling",
+				Percent: 65,
+				Message: "深度反编译部分异常，已提供已知基础源码",
+			}
+		} else {
+			log.Printf("[Task %s] Decompile success", task.ID)
+		}
+		
+		// 重新统计文件个数 (含目录内部文件)
+		var counted int
+		filepath.Walk(tempDir, func(path string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				counted++
+			}
+			return nil
+		})
+		result.FileCount = counted
 	}
 
 	task.FileCount = result.FileCount

@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -199,11 +200,82 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 		return nil, extractErr
 	}
 
+	// 尝试从 app-config.json 恢复 app.json (微信 4.x 兼容)
+	if err := recoverAppJSON(outputDir); err != nil {
+		log.Printf("[Unpack] Warning: failed to recover app.json: %v", err)
+	}
+
+	// 重新计算文件数（因为可能生成了 app.json）
+	entries, _ := os.ReadDir(outputDir)
+	newFileCount := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			newFileCount++
+		}
+	}
+
 	result.Files = files
-	result.FileCount = len(files)
+	result.FileCount = newFileCount
 	result.Success = true
 
 	return result, nil
+}
+
+// recoverAppJSON 尝试从 app-config.json 中提取配置生成 app.json
+func recoverAppJSON(outputDir string) error {
+	appConfigPath := filepath.Join(outputDir, "app-config.json")
+	appJSONPath := filepath.Join(outputDir, "app.json")
+
+	// 如果 app.json 已存在，或 app-config.json 不存在，则跳过
+	if _, err := os.Stat(appJSONPath); err == nil {
+		return nil
+	}
+	if _, err := os.Stat(appConfigPath); os.IsNotExist(err) {
+		return nil
+	}
+
+	data, err := os.ReadFile(appConfigPath)
+	if err != nil {
+		return err
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil // 不是有效的 JSON，直接跳过
+	}
+
+	appJSON := make(map[string]interface{})
+
+	if pages, ok := config["pages"]; ok {
+		appJSON["pages"] = pages
+	}
+	if subPackages, ok := config["subPackages"]; ok {
+		appJSON["subPackages"] = subPackages
+	} else if subpackages, ok := config["subpackages"]; ok {
+		appJSON["subPackages"] = subpackages // 兼容更小写
+	}
+	if global, ok := config["global"].(map[string]interface{}); ok {
+		if window, ok := global["window"]; ok {
+			appJSON["window"] = window
+		}
+	}
+	if tabBar, ok := config["tabBar"]; ok {
+		appJSON["tabBar"] = tabBar
+	}
+	if networkTimeout, ok := config["networkTimeout"]; ok {
+		appJSON["networkTimeout"] = networkTimeout
+	}
+
+	if len(appJSON) == 0 {
+		return nil
+	}
+
+	appJSONData, err := json.MarshalIndent(appJSON, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(appJSONPath, appJSONData, 0644)
 }
 
 // extractFile 提取单个文件

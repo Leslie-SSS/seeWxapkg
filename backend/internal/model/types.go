@@ -4,8 +4,9 @@ import "time"
 
 // CompileRequest 编译请求
 type CompileRequest struct {
-	AppID    string `json:"appId"`
-	Beautify bool   `json:"beautify"`
+	AppID     string `json:"appId"`
+	Beautify  bool   `json:"beautify"`
+	Decompile bool   `json:"decompile"`
 }
 
 // ProgressEvent 进度事件
@@ -25,6 +26,7 @@ type Task struct {
 	ID          string
 	AppID       string
 	Beautify    bool
+	Decompile   bool
 	Status      string // pending, processing, completed, failed
 	Progress    int
 	Message     string

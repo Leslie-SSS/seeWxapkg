@@ -24,7 +24,7 @@ export function useSeeWxapkgUpload() {
 
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
-  const upload = useCallback(async (file: File, appId?: string, beautify = false) => {
+  const upload = useCallback(async (file: File, appId?: string, beautify = false, decompile = false) => {
     // 清理之前的订阅
     if (unsubscribeRef.current) {
       unsubscribeRef.current();
@@ -40,7 +40,7 @@ export function useSeeWxapkgUpload() {
 
     try {
       // 上传文件
-      const response = await api.compile({ file, appId, beautify });
+      const response = await api.compile({ file, appId, beautify, decompile });
 
       if (!response.success) {
         throw new Error(response.message);
