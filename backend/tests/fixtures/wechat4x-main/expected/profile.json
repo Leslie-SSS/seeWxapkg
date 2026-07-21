@@ -1,0 +1,7 @@
+{
+  "isWeChat4xLike": true,
+  "hasAppConfigJSON": true,
+  "hasAppServiceJS": true,
+  "hasPageFrameHTML": true,
+  "suspectedVariant": "wechat4x"
+}

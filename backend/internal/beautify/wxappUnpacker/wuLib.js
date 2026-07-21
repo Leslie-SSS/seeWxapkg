@@ -17,8 +17,12 @@ class CntEvent {
     decount() {
         if (this.cnt > 0) --this.cnt;
         if (this.cnt == 0) {
-            for (let info of this.emptyEvent) info[0](...info[1]);
+            // Detach the current batch before callbacks run. A callback may queue
+            // fresh I/O and register another waiter; consuming that waiter in the
+            // old batch would report completion before the new writes finish.
+            const ready = this.emptyEvent;
             this.emptyEvent = [];
+            for (let info of ready) info[0](...info[1]);
         }
     }
 
@@ -70,21 +74,29 @@ class LimitedRunner {
 }
 
 let ioEvent = new CntEvent;
-let ioLimit = new LimitedRunner(4096);
+const configuredIOLimit = Number.parseInt(process.env.WXAPKG_IO_CONCURRENCY || '16', 10);
+let ioLimit = new LimitedRunner(Number.isSafeInteger(configuredIOLimit)
+    ? Math.max(1, Math.min(configuredIOLimit, 64))
+    : 16);
 
 function mkdirs(dir, cb) {
-    ioLimit.runWithCb(fs.stat.bind(fs), dir, (err, stats) => {
-        if (err) mkdirs(path.dirname(dir), () => fs.mkdir(dir, cb));
-        else if (stats.isFile()) throw Error(dir + " was created as a file, so we cannot put file into it.");
-        else cb();
+    ioLimit.runWithCb(fs.mkdir.bind(fs), dir, {recursive: true, mode: 0o700}, err => {
+        if (err) throw Error("Create directory error: " + err);
+        ioLimit.runWithCb(fs.chmod.bind(fs), dir, 0o700, chmodErr => {
+            if (chmodErr) throw Error("Secure directory error: " + chmodErr);
+            cb();
+        });
     });
 }
 
 function save(name, content) {
     ioEvent.encount();
-    mkdirs(path.dirname(name), () => ioLimit.runWithCb(fs.writeFile.bind(fs), name, content, err => {
+    mkdirs(path.dirname(name), () => ioLimit.runWithCb(fs.writeFile.bind(fs), name, content, {mode: 0o600}, err => {
         if (err) throw Error("Save file error: " + err);
-        ioEvent.decount();
+        ioLimit.runWithCb(fs.chmod.bind(fs), name, 0o600, chmodErr => {
+            if (chmodErr) throw Error("Secure file error: " + chmodErr);
+            ioEvent.decount();
+        });
     }));
 }
 
@@ -116,8 +128,12 @@ function scanDirByExt(dir, ext, cb) {
             for (let file of files) {
                 scanEvent.encount();
                 let name = path.resolve(dir, file);
-                fs.stat(name, (err, stats) => {
+                ioLimit.runWithCb(fs.lstat.bind(fs), name, (err, stats) => {
                     if (err) throw Error("Scan dir error: " + err);
+                    if (stats.isSymbolicLink()) {
+                        scanEvent.decount();
+                        return;
+                    }
                     if (stats.isDirectory()) helper(name);
                     else if (stats.isFile() && name.endsWith(ext)) result.push(name);
                     scanEvent.decount();

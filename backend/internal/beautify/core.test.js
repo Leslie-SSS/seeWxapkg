@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const babelParser = require('@babel/parser');
 
 const {
   beautifyCSS,
@@ -13,10 +14,11 @@ test('beautifyJS applies WeChat comments and conservative renames', async () => 
   const result = await beautifyJS(input, 'index.js', getRuntimeConfig({ deobfuscateEnabled: true }));
 
   assert.equal(result.success, true);
+  assert.equal(result.status, 'formatted');
   assert.match(result.content, /\/\* Page Definition \*\//);
   assert.match(result.content, /\/\* Page loaded - receive options from navigation \*\//);
-  assert.match(result.content, /onLoad\(options\)/);
-  assert.match(result.content, /const page = this;/);
+  assert.match(result.content, /onLoad: function \(options\)/);
+  assert.match(result.content, /var page = this;/);
   assert.match(result.content, /forEach\(function \(item\)/);
 });
 
@@ -35,12 +37,36 @@ test('beautifyJS renames lifecycle, array, promise, and wx callback params conse
   const result = await beautifyJS(input, 'index.js', getRuntimeConfig({ deobfuscateEnabled: true }));
 
   assert.equal(result.success, true);
-  assert.match(result.content, /onShareAppMessage\(res\)/);
+  assert.match(result.content, /onShareAppMessage: function \(res\)/);
   assert.match(result.content, /\.map\(\(item, index\) => item \+ index\)/);
   assert.match(result.content, /\.then\(function \(res\)/);
   assert.match(result.content, /\.catch\(function \(err\)/);
-  assert.match(result.content, /success\(res\)/);
-  assert.match(result.content, /fail\(err\)/);
+  assert.match(result.content, /success: function \(res\)/);
+  assert.match(result.content, /fail: function \(err\)/);
+});
+
+test('beautifyJS defaults to format-only without semantic transforms', async () => {
+  const input = 'Page({onLoad:function(e){var t=this;return e.a+t.data}})';
+  const result = await beautifyJS(input, 'index.js', getRuntimeConfig({ deobfuscateEnabled: false }));
+
+  assert.equal(result.status, 'formatted');
+  assert.doesNotMatch(result.content, /Page Definition/);
+  assert.match(result.content, /onLoad: function \(e\)/);
+  assert.match(result.content, /var t = this;/);
+});
+
+test('optional readability pass preserves function-property and var semantics', async () => {
+  const input = 'Page({Ctor:function(){},onLoad:function(){if(true){void t}var t=this;return t}})';
+  const result = await beautifyJS(input, 'index.js', getRuntimeConfig({ deobfuscateEnabled: true }));
+  const ast = babelParser.parse(result.content);
+  const pageObject = ast.program.body[0].expression.arguments[0];
+  const ctor = pageObject.properties.find(property => property.key.name === 'Ctor');
+  const onLoad = pageObject.properties.find(property => property.key.name === 'onLoad');
+  const declaration = onLoad.value.body.body.find(statement => statement.type === 'VariableDeclaration');
+
+  assert.equal(ctor.type, 'ObjectProperty');
+  assert.equal(ctor.value.type, 'FunctionExpression');
+  assert.equal(declaration.kind, 'var');
 });
 
 test('beautifyHTML formats WXML with stable indentation', async () => {
@@ -48,9 +74,21 @@ test('beautifyHTML formats WXML with stable indentation', async () => {
   const result = await beautifyHTML(input);
 
   assert.equal(result.success, true);
+  assert.equal(result.status, 'unchanged');
   assert.match(result.content, /<text wx:if="{{a}}">1<\/text>/);
   assert.match(result.content, /<custom-card data-id="{{id}}">/);
   assert.match(result.content, /<text wx:else>3<\/text>/);
+});
+
+test('beautifyHTML preserves text and inline WXS bytes while formatting tag syntax', async () => {
+  const input = '<view   class="card"   data-title="{{ title }}">  A\n B <text> C  D </text><wxs module="m">if (a < b) return "<x>";</wxs></view>';
+  const result = await beautifyHTML(input);
+
+  assert.equal(result.status, 'formatted');
+  assert.match(result.content, /^<view class="card" data-title="{{ title }}">/);
+  assert.ok(result.content.includes('  A\n B '));
+  assert.ok(result.content.includes('<text> C  D </text>'));
+  assert.ok(result.content.includes('<wxs module="m">if (a < b) return "<x>";</wxs>'));
 });
 
 test('beautifyCSS formats WXSS constructs with prettier', async () => {
@@ -58,6 +96,7 @@ test('beautifyCSS formats WXSS constructs with prettier', async () => {
   const result = await beautifyCSS(input);
 
   assert.equal(result.success, true);
+  assert.equal(result.status, 'formatted');
   assert.match(result.content, /@import '\.\/base\.wxss';/);
   assert.match(result.content, /\.a,\s*\.b \{/);
   assert.match(result.content, /width: 100rpx;/);
@@ -69,6 +108,7 @@ test('beautifyJS falls back to original content with warning for broken syntax',
   const result = await beautifyJS(input, 'broken.js', getRuntimeConfig({ deobfuscateEnabled: true }));
 
   assert.equal(result.success, true);
+  assert.equal(result.status, 'failed');
   assert.equal(result.content.trim(), input);
   assert.ok(result.warning);
 });
@@ -78,6 +118,7 @@ test('beautifyHTML returns original content with warning when both formatters fa
   const result = await beautifyHTML(input);
 
   assert.equal(result.success, true);
+  assert.equal(result.status, 'skipped');
   assert.equal(result.content, input);
   assert.ok(result.warning);
 });
@@ -87,6 +128,18 @@ test('beautifyCSS returns original content with warning when both formatters fai
   const result = await beautifyCSS(input);
 
   assert.equal(result.success, true);
+  assert.equal(result.status, 'skipped');
   assert.equal(result.content, input);
   assert.ok(result.warning);
+});
+
+test('beautification is idempotent in safe and optional readability modes', async () => {
+  const input = 'Page({onLoad:function(e){var t=this;return e.a+t.data}})';
+  for (const deobfuscateEnabled of [false, true]) {
+    const config = getRuntimeConfig({ deobfuscateEnabled });
+    const first = await beautifyJS(input, 'index.js', config);
+    const second = await beautifyJS(first.content, 'index.js', config);
+    assert.equal(second.content, first.content);
+    assert.equal(second.status, 'unchanged');
+  }
 });

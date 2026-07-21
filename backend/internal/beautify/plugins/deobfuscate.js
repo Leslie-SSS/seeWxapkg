@@ -5,7 +5,10 @@
  * - lifecycle method params like onLoad(e) -> onLoad(options)
  * - array/promise callback params like map((e, n) => {}) -> (item, index)
  * - wx.request({ success(e) {} }) style callback params
- * - `var t = this` aliases inside WeChat definitions -> `const page = this`
+ * - `var t = this` aliases inside WeChat definitions -> `var page = this`
+ *
+ * Variable declaration kinds are intentionally preserved. Replacing `var` with
+ * `const` can introduce a temporal dead zone and change function/block scoping.
  */
 
 function isMinifiedName(name) {
@@ -97,13 +100,6 @@ function getKeyName(node) {
   }
 
   return null;
-}
-
-function isFunctionLikePath(path) {
-  return path?.isFunctionDeclaration?.() ||
-    path?.isFunctionExpression?.() ||
-    path?.isArrowFunctionExpression?.() ||
-    path?.isObjectMethod?.();
 }
 
 function getFunctionKeyName(path) {
@@ -299,14 +295,6 @@ function renameThisAlias(path) {
 
   path.scope.rename(originalName, newName);
 
-  const declaration = path.parentPath;
-  if (
-    declaration?.isVariableDeclaration() &&
-    declaration.node.declarations.length === 1 &&
-    declaration.node.kind !== 'const'
-  ) {
-    declaration.node.kind = 'const';
-  }
 }
 
 module.exports = function deobfuscateTransform() {
@@ -331,11 +319,3 @@ module.exports = function deobfuscateTransform() {
     },
   };
 };
-
-module.exports.ARRAY_METHOD_PATTERNS = ARRAY_METHOD_PATTERNS;
-module.exports.LIFECYCLE_PARAMS = LIFECYCLE_PARAMS;
-module.exports.PROMISE_PATTERNS = PROMISE_PATTERNS;
-module.exports.WX_API_PATTERNS = WX_API_PATTERNS;
-module.exports.findWeChatRoot = findWeChatRoot;
-module.exports.getParamSuggestions = getParamSuggestions;
-module.exports.isMinifiedName = isMinifiedName;

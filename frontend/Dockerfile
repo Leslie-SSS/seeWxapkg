@@ -1,9 +1,21 @@
-# 直接使用本地构建好的文件
-FROM nginx:alpine
+FROM node:24-alpine AS builder
 
-COPY dist /usr/share/nginx/html
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM nginx:1.29-alpine
+
+COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/nginx.conf
 
-EXPOSE 80
+RUN chown -R nginx:nginx /usr/share/nginx/html /var/cache/nginx
+
+EXPOSE 8080
+
+USER nginx
 
 CMD ["nginx", "-g", "daemon off;"]

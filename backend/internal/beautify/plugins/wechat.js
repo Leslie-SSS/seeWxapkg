@@ -3,8 +3,11 @@
  *
  * It performs two readability-focused transforms:
  * - mark Page/Component/App/Behavior definitions with a single leading comment
- * - normalize `foo: function() {}` into object-method syntax inside WeChat objects
  * - add short lifecycle comments for high-signal hooks
+ *
+ * Function-valued properties deliberately remain properties. Object methods are
+ * not constructible, so changing `foo: function () {}` to `foo() {}` can alter
+ * observable runtime behaviour.
  */
 
 const ROOT_TYPES = new Set(['App', 'Behavior', 'Component', 'Page']);
@@ -41,13 +44,18 @@ function getKeyName(node) {
   return null;
 }
 
-function addLeadingBlockComment(node, text) {
+function hasComment(node, text) {
+  return !!node && ['leadingComments', 'innerComments', 'trailingComments'].some(key =>
+    Array.isArray(node[key]) && node[key].some(comment => comment.value.includes(text))
+  );
+}
+
+function addLeadingBlockComment(node, text, relatedNodes = []) {
   if (!node) {
     return;
   }
 
-  const exists = Array.isArray(node.leadingComments) &&
-    node.leadingComments.some(comment => comment.value.includes(text));
+  const exists = [node, ...relatedNodes].some(candidate => hasComment(candidate, text));
 
   if (!exists) {
     node.leadingComments = node.leadingComments || [];
@@ -75,36 +83,7 @@ function getWeChatRootName(path) {
   return null;
 }
 
-function toObjectMethod(t, propertyPath) {
-  const property = propertyPath.node;
-  if (
-    !propertyPath.isObjectProperty() ||
-    property.computed ||
-    property.shorthand ||
-    property.value?.type !== 'FunctionExpression'
-  ) {
-    return;
-  }
-
-  const method = t.objectMethod(
-    'method',
-    property.key,
-    property.value.params,
-    property.value.body,
-    property.computed,
-  );
-  method.async = property.value.async;
-  method.generator = property.value.generator;
-  method.returnType = property.value.returnType;
-  method.typeParameters = property.value.typeParameters;
-  method.leadingComments = property.leadingComments || property.value.leadingComments || [];
-  method.trailingComments = property.trailingComments || property.value.trailingComments || [];
-  method.loc = property.loc;
-
-  propertyPath.replaceWith(method);
-}
-
-module.exports = function wechatTransform({ types: t }) {
+module.exports = function wechatTransform() {
   return {
     name: 'wechat-patterns',
     visitor: {
@@ -114,7 +93,7 @@ module.exports = function wechatTransform({ types: t }) {
           return;
         }
 
-        addLeadingBlockComment(path.node, `${rootName} Definition`);
+        addLeadingBlockComment(path.node, `${rootName} Definition`, [path.parentPath?.node]);
       },
 
       ObjectProperty(path) {
@@ -126,7 +105,11 @@ module.exports = function wechatTransform({ types: t }) {
           return;
         }
 
-        toObjectMethod(t, path);
+        const methodName = getKeyName(path.node.key);
+        const comment = LIFECYCLE_COMMENTS[methodName];
+        if (comment) {
+          addLeadingBlockComment(path.node, comment);
+        }
       },
 
       ObjectMethod(path) {
@@ -143,6 +126,3 @@ module.exports = function wechatTransform({ types: t }) {
     },
   };
 };
-
-module.exports.LIFECYCLE_COMMENTS = LIFECYCLE_COMMENTS;
-module.exports.ROOT_TYPES = ROOT_TYPES;

@@ -117,11 +117,9 @@ func TestServiceSmokeStartsNodeSidecar(t *testing.T) {
 		t.Fatalf("getwd: %v", err)
 	}
 
-	cfg := DefaultConfig()
-	cfg.Enabled = true
+	cfg := ConfigFromParams(true, 3, 8*1024*1024, 5, false)
 	cfg.BeautifyDir = wd
 	cfg.ServerPort = freePort(t)
-	cfg.Timeout = 3 * time.Second
 
 	svc, err := NewService(cfg)
 	if err != nil {
@@ -144,16 +142,42 @@ func TestServiceSmokeStartsNodeSidecar(t *testing.T) {
 	output := string(svc.Beautify(input, "index.js"))
 
 	wantSnippets := []string{
-		"/* Page Definition */",
-		"onLoad(options)",
-		"const page = this;",
-		"function (item)",
+		"onLoad: function (e)",
+		"var t = this;",
+		"function (e)",
 	}
 
 	for _, snippet := range wantSnippets {
 		if !strings.Contains(output, snippet) {
 			t.Fatalf("expected output to contain %q, got:\n%s", snippet, output)
 		}
+	}
+}
+
+func TestUnhealthyServiceDoesNotConsumeHalfOpenProbe(t *testing.T) {
+	breaker := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
+		FailureThreshold: 1,
+		SuccessThreshold: 1,
+		Timeout:          time.Millisecond,
+	})
+	breaker.RecordFailure()
+	breaker.lastFailure = time.Now().Add(-time.Second)
+	service := &Service{
+		enabled:        true,
+		maxFileSize:    1024,
+		circuitBreaker: breaker,
+		healthy:        false,
+	}
+
+	result := service.BeautifyDetailed([]byte("const x=1"), "index.js")
+	if result.Status != "skipped" || result.Warning != "formatter unavailable" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	breaker.mu.RLock()
+	state := breaker.state
+	breaker.mu.RUnlock()
+	if state != StateOpen {
+		t.Fatalf("circuit state = %s, want open", state)
 	}
 }
 

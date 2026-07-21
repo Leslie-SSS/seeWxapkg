@@ -35,15 +35,16 @@ type CircuitBreaker struct {
 	mu sync.RWMutex
 
 	// Configuration
-	failureThreshold  int           // Number of failures before opening
-	successThreshold  int           // Number of successes in half-open to close
-	timeout           time.Duration // Time to wait before trying half-open
+	failureThreshold int           // Number of failures before opening
+	successThreshold int           // Number of successes in half-open to close
+	timeout          time.Duration // Time to wait before trying half-open
 
 	// State
-	state          State
-	failures       int
-	successes      int
-	lastFailure    time.Time
+	state           State
+	failures        int
+	successes       int
+	probeInFlight   bool
+	lastFailure     time.Time
 	lastStateChange time.Time
 }
 
@@ -76,28 +77,28 @@ func NewCircuitBreakerWithConfig(cfg CircuitBreakerConfig) *CircuitBreaker {
 
 // IsOpen returns true if the circuit breaker is open (requests should be blocked)
 func (cb *CircuitBreaker) IsOpen() bool {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
 
-	if cb.state == StateOpen {
-		// Check if timeout has passed to try half-open
-		if time.Since(cb.lastFailure) > cb.timeout {
-			cb.mu.RUnlock()
-			cb.mu.Lock()
-			// Double check after acquiring write lock
-			if cb.state == StateOpen && time.Since(cb.lastFailure) > cb.timeout {
-				cb.state = StateHalfOpen
-				cb.successes = 0
-				cb.lastStateChange = time.Now()
-			}
-			cb.mu.Unlock()
-			cb.mu.RLock()
-			return false // Allow one request through in half-open
+	switch cb.state {
+	case StateOpen:
+		if time.Since(cb.lastFailure) <= cb.timeout {
+			return true
 		}
-		return true
+		cb.state = StateHalfOpen
+		cb.successes = 0
+		cb.probeInFlight = true
+		cb.lastStateChange = time.Now()
+		return false
+	case StateHalfOpen:
+		if cb.probeInFlight {
+			return true
+		}
+		cb.probeInFlight = true
+		return false
+	default:
+		return false
 	}
-
-	return false
 }
 
 // RecordSuccess records a successful operation
@@ -109,6 +110,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 
 	switch cb.state {
 	case StateHalfOpen:
+		cb.probeInFlight = false
 		cb.successes++
 		if cb.successes >= cb.successThreshold {
 			cb.state = StateClosed
@@ -137,15 +139,9 @@ func (cb *CircuitBreaker) RecordFailure() {
 	case StateHalfOpen:
 		// Any failure in half-open goes back to open
 		cb.state = StateOpen
+		cb.probeInFlight = false
 		cb.lastStateChange = time.Now()
 	}
-}
-
-// GetState returns the current state
-func (cb *CircuitBreaker) GetState() State {
-	cb.mu.RLock()
-	defer cb.mu.RUnlock()
-	return cb.state
 }
 
 // GetStats returns current statistics
@@ -157,20 +153,10 @@ func (cb *CircuitBreaker) GetStats() map[string]interface{} {
 		"state":            cb.state.String(),
 		"failures":         cb.failures,
 		"successes":        cb.successes,
+		"probeInFlight":    cb.probeInFlight,
 		"failureThreshold": cb.failureThreshold,
 		"successThreshold": cb.successThreshold,
 		"lastFailure":      cb.lastFailure,
 		"lastStateChange":  cb.lastStateChange,
 	}
-}
-
-// Reset resets the circuit breaker to closed state
-func (cb *CircuitBreaker) Reset() {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	cb.state = StateClosed
-	cb.failures = 0
-	cb.successes = 0
-	cb.lastStateChange = time.Now()
 }

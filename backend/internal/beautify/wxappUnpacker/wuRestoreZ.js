@@ -1,16 +1,127 @@
-const wu = require("./wuLib.js");
-const {VM} = require('vm2');
+const {parseScript, staticEvaluate} = require('./wuStatic.js');
+const diagnostics = require('./wuDiagnostics.js');
+
+const UNRESOLVED_OPCODE = Symbol('seewx.unresolvedOpcode');
+const UNRESOLVED_VALUE = Symbol('seewx.unresolvedWxmlValue');
+
+function unresolvedOpcode(reason) {
+	return Object.freeze({
+		[UNRESOLVED_OPCODE]: true,
+		reason
+	});
+}
+
+function containsUnresolvedOpcode(value, seen = new Set()) {
+	if (!value || typeof value !== 'object') return false;
+	if (value[UNRESOLVED_OPCODE]) return true;
+	if (seen.has(value)) return false;
+	seen.add(value);
+	if (Array.isArray(value)) return value.some(item => containsUnresolvedOpcode(item, seen));
+	return Object.values(value).some(item => containsUnresolvedOpcode(item, seen));
+}
+
+function unresolvedValue(opcode) {
+	return Object.freeze({
+		[UNRESOLVED_VALUE]: true,
+		reason: opcode.reason
+	});
+}
+
+function isUnresolvedValue(value) {
+	return Boolean(value && typeof value === 'object' && value[UNRESOLVED_VALUE]);
+}
+
+function opcodeBuilderBody(ast) {
+	const candidates = [];
+	for (const statement of ast.body) {
+		if (statement.type !== 'ExpressionStatement') continue;
+		const call = statement.expression;
+		if (call.type !== 'CallExpression' || call.callee.type !== 'FunctionExpression') continue;
+		const fn = call.callee;
+		if (fn.params.length !== 1 || fn.params[0].type !== 'Identifier' || fn.params[0].name !== 'z') continue;
+		const zDeclarations = fn.body.body.filter(item =>
+			item.type === 'FunctionDeclaration' && item.id && item.id.name === 'Z');
+		if (zDeclarations.length !== 1) continue;
+		candidates.push(fn.body.body);
+	}
+	if (candidates.length !== 1) {
+		throw new Error(`Expected one WXML opcode builder, found ${candidates.length}`);
+	}
+	return candidates[0];
+}
+
+function collectStaticZ(code) {
+	const values = [];
+	const statements = opcodeBuilderBody(parseScript(code));
+	const env = Object.create(null);
+	env.z = values;
+
+	// Only evaluate the opcode builder's direct, straight-line statements.
+	// Calls nested in functions or branches are not known to execute and must
+	// never consume a z-table slot. Unsupported executable control flow aborts
+	// this table rather than returning confidently misaligned source.
+	for (const statement of statements) {
+		if (statement.type === 'FunctionDeclaration' || statement.type === 'EmptyStatement') continue;
+		if (statement.type === 'ReturnStatement') break;
+		if (statement.type === 'VariableDeclaration') {
+			for (const declaration of statement.declarations) {
+				if (declaration.id.type !== 'Identifier' || !declaration.init) {
+					throw new Error('Unsupported WXML opcode builder declaration');
+				}
+				const name = declaration.id.name;
+				if (name === 'z' || name === 'Z') throw new Error(`Unsafe WXML opcode binding: ${name}`);
+				env[name] = staticEvaluate(declaration.init, env);
+			}
+			continue;
+		}
+		if (statement.type === 'IfStatement') {
+			const test = staticEvaluate(statement.test, env);
+			if (test === false && !statement.alternate) continue;
+			throw new Error('Unsupported WXML opcode builder branch');
+		}
+		if (statement.type !== 'ExpressionStatement') {
+			throw new Error(`Unsupported WXML opcode builder statement: ${statement.type}`);
+		}
+		const node = statement.expression;
+		if (
+			node.type !== 'CallExpression' ||
+			node.callee.type !== 'Identifier' ||
+			node.callee.name !== 'Z' ||
+			node.arguments.length === 0
+		) {
+			throw new Error('Unsupported executable statement in WXML opcode builder');
+		}
+		try {
+			const value = staticEvaluate(node.arguments[0], env);
+			if (containsUnresolvedOpcode(value)) {
+				values.push(unresolvedOpcode('depends on an unresolved opcode'));
+			} else {
+				values.push(value);
+			}
+		} catch (error) {
+			// Keep the slot so later z[n] references do not shift onto unrelated
+			// opcodes. The renderer will aggregate referenced unknowns per WXML file.
+			values.push(unresolvedOpcode(error.message));
+			console.warn('Preserving unresolved WXML opcode slot:', error.message);
+		}
+	}
+	if (env.a !== 11) throw new Error('Unexpected WXML value-list opcode');
+	return values;
+}
 
 function catchZGroup(code, groupPreStr, cb) {
-	const debugPre = "(function(z){var a=11;function Z(ops,debugLine){";
 	let zArr = {};
 	for (let preStr of groupPreStr) {
-		let content = code.slice(code.indexOf(preStr)), z = [];
+		let content = code.slice(code.indexOf(preStr));
 		content = content.slice(content.indexOf("(function(z){var a=11;"));
 		content = content.slice(0, content.indexOf("})(__WXML_GLOBAL__.ops_cached.$gwx")) + "})(z);";
-		let vm = new VM({sandbox: {z: z, debugInfo: []}});
-		vm.run(content);
-		if (content.startsWith(debugPre)) for (let i = 0; i < z.length; i++) z[i] = z[i][1];
+		let z = [];
+		try {
+			z = collectStaticZ(content);
+		} catch (error) {
+			diagnostics.partial('fallback.wxml.group_opcode_parse_failed', `Unable to statically recover grouped WXML opcodes: ${error.message}`);
+			console.warn('Unable to statically recover grouped WXML opcodes:', error.message);
+		}
 		zArr[preStr.match(/function gz\$gwx(\d*\_\d+)/)[1]] = z;
 	}
 	cb({"mul": zArr});
@@ -19,21 +130,22 @@ function catchZGroup(code, groupPreStr, cb) {
 function catchZ(code, cb) {
 	let groupTest = code.match(/function gz\$gwx(\d*\_\d+)\(\)\{\s*if\( __WXML_GLOBAL__\.ops_cached\.\$gwx\d*\_\d+\)/g);
 	if (groupTest !== null) return catchZGroup(code, groupTest, cb);
-	let z = [], vm = new VM({
-		sandbox: {
-			z: z,
-			debugInfo: []
-		}
-	});
+	let z = [];
 	let lastPtr = code.lastIndexOf("(z);__WXML_GLOBAL__.ops_set.$gwx=z;");
 	if (lastPtr == -1) lastPtr = code.lastIndexOf("(z);__WXML_GLOBAL__.ops_set.$gwx");
 	code = code.slice(code.lastIndexOf('(function(z){var a=11;function Z(ops){z.push(ops)}'), lastPtr + 4);
-	vm.run(code);
+	try {
+		z = collectStaticZ(code);
+	} catch (error) {
+		diagnostics.partial('fallback.wxml.opcode_parse_failed', `Unable to statically recover WXML opcodes: ${error.message}`);
+		console.warn('Unable to statically recover WXML opcodes:', error.message);
+	}
 	cb(z);
 }
 
 function restoreSingle(ops, withScope = false) {
 	if (typeof ops == "undefined") return "";
+	if (ops && typeof ops === 'object' && ops[UNRESOLVED_OPCODE]) return unresolvedValue(ops);
 
 	function scope(value) {
 		if (value.startsWith('{') && value.endsWith('}')) return withScope ? value : "{" + value + "}";
@@ -92,8 +204,9 @@ function restoreSingle(ops, withScope = false) {
 				return scope(jsoToWxon(ops[1]));
 			case 11://values list, According to var a = 11;
 				let ans = "";
-				ops.shift();
-				for (let perOp of ops) ans += restoreNext(perOp);
+				// Do not mutate the shared opcode array: modern bundles commonly use
+				// Z(z[n]), so multiple table entries can reference the same object.
+				for (let index = 1; index < ops.length; index++) ans += restoreNext(ops[index]);
 				return ans;
 		}
 	} else {
@@ -278,5 +391,8 @@ function restoreAll(z) {
 module.exports = {
 	getZ(code, cb) {
 		catchZ(code, z => cb(restoreAll(z)));
-	}
+	},
+	collectStaticZ,
+	isUnresolvedValue,
+	restoreAll
 };

@@ -21,13 +21,10 @@
   },
   "homepage": "https://github.com/qwerty472123/wxappUnpacker#readme",
   "dependencies": {
-    "cheerio": "^1.0.0-rc.3",
     "css-tree": "^1.0.0-alpha.28",
     "cssbeautify": "^0.3.1",
     "escodegen": "^1.11.0",
     "esprima": "^4.0.0",
-    "js-beautify": "^1.7.5",
-    "uglify-es": "^3.3.9",
-    "vm2": "^3.6.0"
+    "uglify-es": "^3.3.9"
   }
 }
