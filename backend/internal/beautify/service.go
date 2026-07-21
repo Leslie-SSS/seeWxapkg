@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keepbuild/seewxapkg/internal/infra/process"
 )
 
 // Service manages the beautification process
@@ -52,21 +54,6 @@ type Config struct {
 	Deobfuscate      bool
 }
 
-// DefaultConfig returns the default configuration
-func DefaultConfig() Config {
-	nodePath, _ := exec.LookPath("node")
-	return Config{
-		Enabled:          false,
-		NodePath:         nodePath,
-		ServerPort:       3001,
-		Timeout:          5 * time.Second,
-		MaxFileSize:      500 * 1024, // 500KB
-		BeautifyDir:      "./internal/beautify",
-		FailureThreshold: 5,
-		Deobfuscate:      true,
-	}
-}
-
 // ConfigFromParams creates a Config from individual parameters
 func ConfigFromParams(enabled bool, timeoutSeconds, maxFileSize, failureLimit int, deobfuscate bool) Config {
 	nodePath, _ := exec.LookPath("node")
@@ -91,10 +78,20 @@ type Request struct {
 
 // Response represents a beautify response
 type Response struct {
-	Success bool   `json:"success"`
-	Content string `json:"content"`
-	Error   string `json:"error,omitempty"`
-	Warning string `json:"warning,omitempty"`
+	Success   bool   `json:"success"`
+	Status    string `json:"status,omitempty"`
+	Content   string `json:"content"`
+	Formatter string `json:"formatter,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Warning   string `json:"warning,omitempty"`
+}
+
+type Result struct {
+	Content   []byte
+	Status    string
+	Formatter string
+	Warning   string
+	Error     error
 }
 
 // NewService creates a new beautify service
@@ -104,8 +101,7 @@ func NewService(cfg Config) (*Service, error) {
 	}
 
 	if cfg.NodePath == "" {
-		log.Println("[Beautify] Node.js not found, beautification disabled")
-		return newDisabledService(), nil
+		return nil, fmt.Errorf("node.js not found while beautification is enabled")
 	}
 
 	cb := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
@@ -131,8 +127,7 @@ func NewService(cfg Config) (*Service, error) {
 
 	// Start the Node.js server
 	if err := s.startServer(cfg.BeautifyDir, cfg.ServerPort); err != nil {
-		log.Printf("[Beautify] Failed to start server: %v", err)
-		return newDisabledService(), nil
+		return nil, fmt.Errorf("start beautify server: %w", err)
 	}
 
 	// Start health check goroutine
@@ -157,7 +152,11 @@ func (s *Service) startServer(beautifyDir string, port int) error {
 	s.processMu.Lock()
 	defer s.processMu.Unlock()
 
-	absBeautifyDir, err := filepath.Abs(beautifyDir)
+	absBeautifyDir, err := process.ResolveExistingPath(
+		beautifyDir,
+		filepath.Join("backend", "internal", "beautify"),
+		filepath.Join("internal", "beautify"),
+	)
 	if err != nil {
 		return fmt.Errorf("resolve beautify dir: %w", err)
 	}
@@ -195,8 +194,11 @@ func (s *Service) startServer(beautifyDir string, port int) error {
 	}
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("BEAUTIFY_PORT=%d", port),
-		fmt.Sprintf("BEAUTIFY_HOST=127.0.0.1"),
+		"BEAUTIFY_HOST=127.0.0.1",
 		fmt.Sprintf("MAX_CONTENT_SIZE=%d", s.maxFileSize),
+		fmt.Sprintf("BEAUTIFY_JOB_TIMEOUT_MS=%d", s.timeout.Milliseconds()),
+		"BEAUTIFY_WORKERS=2",
+		"BEAUTIFY_QUEUE_SIZE=32",
 		fmt.Sprintf("DEOBFUSCATE_ENABLED=%s", deobfuscateStr),
 	)
 
@@ -287,27 +289,36 @@ func (s *Service) IsHealthy() bool {
 
 // Beautify beautifies the given content
 func (s *Service) Beautify(content []byte, filename string) []byte {
+	return s.BeautifyDetailed(content, filename).Content
+}
+
+// BeautifyDetailed distinguishes actual formatting from unchanged, skipped and
+// failed outcomes. The original bytes are always returned on non-formatted
+// outcomes so a formatter can never make extraction destructive.
+func (s *Service) BeautifyDetailed(content []byte, filename string) Result {
 	// Check if beautification is enabled
 	if !s.enabled {
-		return content
+		return Result{Content: content, Status: "skipped", Warning: "formatter disabled"}
 	}
 
 	// Check file size
 	if len(content) > s.maxFileSize {
-		log.Printf("[Beautify] File too large (%d bytes), skipping: %s", len(content), filename)
-		return content
-	}
-
-	// Check circuit breaker
-	if s.circuitBreaker.IsOpen() {
-		log.Printf("[Beautify] Circuit breaker open, skipping: %s", filename)
-		return content
+		log.Printf("[Beautify] File too large (%d bytes), skipping", len(content))
+		return Result{Content: content, Status: "skipped", Warning: "file exceeds formatter limit"}
 	}
 
 	// Check health
 	if !s.IsHealthy() {
-		log.Printf("[Beautify] Service unhealthy, skipping: %s", filename)
-		return content
+		log.Printf("[Beautify] Service unhealthy, skipping file")
+		return Result{Content: content, Status: "skipped", Warning: "formatter unavailable"}
+	}
+
+	// Check the circuit only after the sidecar is healthy. Otherwise moving an
+	// open circuit to half-open would reserve its single probe without ever
+	// issuing a request, leaving the breaker stuck indefinitely.
+	if s.circuitBreaker.IsOpen() {
+		log.Printf("[Beautify] Circuit breaker open, skipping file")
+		return Result{Content: content, Status: "skipped", Warning: "formatter circuit breaker open"}
 	}
 
 	// Determine file type
@@ -317,19 +328,47 @@ func (s *Service) Beautify(content []byte, filename string) []byte {
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 	defer cancel()
 
-	result, err := s.beautifyWithContext(ctx, content, fileType, filename)
+	response, err := s.beautifyWithContext(ctx, content, fileType, filename)
 	if err != nil {
 		s.circuitBreaker.RecordFailure()
-		log.Printf("[Beautify] Failed for %s: %v, returning original", filename, err)
-		return content
+		log.Printf("[Beautify] Formatting failed (%T), returning original", err)
+		return Result{Content: content, Status: "failed", Error: err}
 	}
 
-	s.circuitBreaker.RecordSuccess()
+	status := response.Status
+	if status == "" {
+		status = "formatted"
+		if response.Content == string(content) {
+			status = "unchanged"
+		}
+	}
+	result := Result{
+		Content:   []byte(response.Content),
+		Status:    status,
+		Formatter: response.Formatter,
+		Warning:   response.Warning,
+	}
+	if status == "failed" || !response.Success {
+		errText := response.Error
+		if errText == "" {
+			errText = response.Warning
+		}
+		if errText == "" {
+			errText = "formatter reported failure"
+		}
+		result.Content = content
+		result.Error = fmt.Errorf("%s", errText)
+		s.circuitBreaker.RecordFailure()
+		return result
+	}
+	if status == "formatted" || status == "unchanged" {
+		s.circuitBreaker.RecordSuccess()
+	}
 	return result
 }
 
 // beautifyWithContext performs beautification with context
-func (s *Service) beautifyWithContext(ctx context.Context, content []byte, fileType, filename string) ([]byte, error) {
+func (s *Service) beautifyWithContext(ctx context.Context, content []byte, fileType, filename string) (Response, error) {
 	reqBody := Request{
 		Content:  string(content),
 		Type:     fileType,
@@ -338,45 +377,49 @@ func (s *Service) beautifyWithContext(ctx context.Context, content []byte, fileT
 
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return Response{}, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", s.serverURL+"/beautify", bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+		return Response{}, fmt.Errorf("create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
+		return Response{}, fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	maxResponseBytes := int64(s.maxFileSize)*2 + 64*1024
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
+		return Response{}, fmt.Errorf("read response: %w", err)
+	}
+	if int64(len(respBody)) > maxResponseBytes {
+		return Response{}, fmt.Errorf("formatter response exceeds %d bytes", maxResponseBytes)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return Response{}, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
 	var result Response
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+		return Response{}, fmt.Errorf("unmarshal response: %w", err)
 	}
 
 	if !result.Success {
-		return nil, fmt.Errorf("beautify failed: %s", result.Error)
+		return result, fmt.Errorf("beautify failed: %s", result.Error)
 	}
 
 	if result.Warning != "" {
-		log.Printf("[Beautify] Warning for %s: %s", filename, result.Warning)
+		log.Printf("[Beautify] Formatter returned a warning")
 	}
 
-	return []byte(result.Content), nil
+	return result, nil
 }
 
 // getFileType determines the file type from filename

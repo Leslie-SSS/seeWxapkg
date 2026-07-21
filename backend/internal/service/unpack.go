@@ -1,10 +1,8 @@
 package service
 
 import (
-	"archive/zip"
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -14,8 +12,15 @@ import (
 	"sync"
 
 	"github.com/keepbuild/seewxapkg/internal/beautify"
+	"github.com/keepbuild/seewxapkg/internal/infra/storage"
 	"github.com/keepbuild/seewxapkg/internal/model"
 	"github.com/tidwall/pretty"
+)
+
+const (
+	maxWxapkgFiles    = 100_000
+	maxWxapkgNameSize = 4 * 1024
+	maxExtractWorkers = 10
 )
 
 // Global beautify service instance
@@ -34,10 +39,9 @@ func InitBeautifyService(enabled bool, timeoutSeconds int, maxFileSize int, fail
 	var err error
 	beautifyService, err = beautify.NewService(cfg)
 	if err != nil {
-		log.Printf("[Unpack] Failed to initialize beautify service: %v", err)
-		// Don't fail startup, just disable beautification
+		log.Printf("[Unpack] Failed to initialize beautify service (%T)", err)
 		beautifyService = nil
-		return nil
+		return fmt.Errorf("initialize beautify service: %w", err)
 	}
 
 	log.Printf("[Unpack] Beautify service initialized successfully")
@@ -48,7 +52,7 @@ func InitBeautifyService(enabled bool, timeoutSeconds int, maxFileSize int, fail
 func StopBeautifyService() {
 	if beautifyService != nil {
 		if err := beautifyService.Stop(); err != nil {
-			log.Printf("[Unpack] Error stopping beautify service: %v", err)
+			log.Printf("[Unpack] Error stopping beautify service (%T)", err)
 		}
 		beautifyService = nil
 	}
@@ -69,10 +73,8 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 		Files: make([]model.FileEntry, 0),
 	}
 
-	log.Printf("[Unpack] Starting unpack, data size: %d bytes", len(data))
-
 	// 创建输出目录
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0700); err != nil {
 		return nil, fmt.Errorf("create output dir: %w", err)
 	}
 
@@ -84,14 +86,8 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 	}
 
 	firstMark := data[0]
-	log.Printf("[Unpack] First byte: 0x%02X", firstMark)
-
 	if firstMark != 0xBE {
 		// 检查是否是加密文件
-		if len(data) >= 6 {
-			header := string(data[:6])
-			log.Printf("[Unpack] First 6 bytes: %s", header)
-		}
 		if len(data) >= 6 && string(data[:6]) == "V1MMWX" {
 			return nil, fmt.Errorf("文件是加密格式（V1MMWX），需要提供正确的 AppID 进行解密")
 		}
@@ -99,8 +95,7 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 	}
 
 	// 使用 bytes.Reader 按照大端序读取
-	reader := bytes.NewReader(data)
-	reader.Seek(1, io.SeekStart) // 跳过 firstMark
+	reader := bytes.NewReader(data[1:])
 
 	// Java: int info1 = buffer.getInt();
 	var info1 uint32
@@ -126,13 +121,22 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 		return nil, fmt.Errorf("read lastMark: %w", err)
 	}
 
-	log.Printf("[Unpack] File header: info1=%d, indexLen=%d, bodyLen=%d, lastMark=0x%02X",
-		info1, indexInfoLength, bodyInfoLength, lastMark)
-
 	// Java: if (lastMark != (byte) 0xED) { throw ... }
 	if lastMark != 0xED {
 		return nil, fmt.Errorf("无效的 wxapkg 文件：尾标记错误（期望 0xED，实际 0x%02X）", lastMark)
 	}
+	if indexInfoLength < 4 {
+		return nil, fmt.Errorf("invalid wxapkg index length: %d", indexInfoLength)
+	}
+	indexEnd := uint64(14) + uint64(indexInfoLength)
+	packageEnd := indexEnd + uint64(bodyInfoLength)
+	if indexEnd > uint64(len(data)) || packageEnd > uint64(len(data)) {
+		return nil, fmt.Errorf("wxapkg sections out of bounds: index=%d, body=%d, dataLen=%d",
+			indexInfoLength, bodyInfoLength, len(data))
+	}
+
+	// Never let malformed index metadata consume bytes from the package body.
+	reader = bytes.NewReader(data[14:indexEnd])
 
 	// Java: int fileCount = buffer.getInt();
 	var fileCount uint32
@@ -140,15 +144,29 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 		return nil, fmt.Errorf("read fileCount: %w", err)
 	}
 
-	log.Printf("[Unpack] File count: %d", fileCount)
+	if fileCount > maxWxapkgFiles {
+		return nil, fmt.Errorf("wxapkg contains too many files: %d (max %d)", fileCount, maxWxapkgFiles)
+	}
+	// Even an empty-name entry needs nameLen, offset and size fields.
+	if uint64(fileCount)*12 > uint64(reader.Len()) {
+		return nil, fmt.Errorf("invalid wxapkg file count %d for index length %d", fileCount, indexInfoLength)
+	}
 
 	// Java: for (int i = 0; i < fileCount; i++) {
-	files := make([]model.FileEntry, fileCount)
+	files := make([]model.FileEntry, int(fileCount))
+	var totalExtracted uint64
+	seenTargets := make(map[string]struct{}, int(fileCount))
 	for i := uint32(0); i < fileCount; i++ {
 		// Java: int nameLen = buffer.getInt();
 		var nameLen uint32
 		if err := binary.Read(reader, binary.BigEndian, &nameLen); err != nil {
 			return nil, fmt.Errorf("read nameLen: %w", err)
+		}
+		if nameLen == 0 || nameLen > maxWxapkgNameSize {
+			return nil, fmt.Errorf("invalid file name length at index %d: %d", i, nameLen)
+		}
+		if uint64(nameLen)+8 > uint64(reader.Len()) {
+			return nil, fmt.Errorf("file index entry %d exceeds declared index section", i)
 		}
 
 		// Java: byte[] nameBytes = new byte[nameLen];
@@ -168,127 +186,79 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 		if err := binary.Read(reader, binary.BigEndian, &files[i].Size); err != nil {
 			return nil, fmt.Errorf("read file size: %w", err)
 		}
+
+		if err := validateFileBounds(files[i], len(data)); err != nil {
+			return nil, err
+		}
+		totalExtracted += uint64(files[i].Size)
+		if totalExtracted > uint64(len(data)) {
+			return nil, fmt.Errorf("declared extracted data exceeds package size")
+		}
+		target, err := safeOutputPath(outputDir, files[i].Name)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seenTargets[target]; exists {
+			return nil, fmt.Errorf("duplicate output path: %s", files[i].Name)
+		}
+		seenTargets[target] = struct{}{}
 	}
 
-	// 并发提取文件
+	// Use a fixed worker pool so an attacker-controlled file count cannot create
+	// an unbounded number of goroutines.
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var extractErr error
-	maxWorkers := 10
-	semaphore := make(chan struct{}, maxWorkers)
-
-	for _, file := range files {
-		wg.Add(1)
-		go func(f model.FileEntry) {
-			defer wg.Done()
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			if err := extractFile(data, f, outputDir, beautify); err != nil {
-				mu.Lock()
-				if extractErr == nil {
-					extractErr = err
-				}
-				mu.Unlock()
-			}
-		}(file)
+	jobs := make(chan model.FileEntry)
+	workerCount := maxExtractWorkers
+	if len(files) < workerCount {
+		workerCount = len(files)
 	}
-
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for f := range jobs {
+				if err := extractFile(data, f, outputDir, beautify); err != nil {
+					mu.Lock()
+					if extractErr == nil {
+						extractErr = err
+					}
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, file := range files {
+		jobs <- file
+	}
+	close(jobs)
 	wg.Wait()
 
 	if extractErr != nil {
 		return nil, extractErr
 	}
 
-	// 尝试从 app-config.json 恢复 app.json (微信 4.x 兼容)
-	if err := recoverAppJSON(outputDir); err != nil {
-		log.Printf("[Unpack] Warning: failed to recover app.json: %v", err)
-	}
-
-	// 重新计算文件数（因为可能生成了 app.json）
-	entries, _ := os.ReadDir(outputDir)
-	newFileCount := 0
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			newFileCount++
-		}
-	}
-
 	result.Files = files
-	result.FileCount = newFileCount
+	// Every validated index entry maps to one unique regular output file. Using
+	// the index count keeps nested page/component files in the reported total.
+	result.FileCount = len(files)
 	result.Success = true
 
 	return result, nil
 }
 
-// recoverAppJSON 尝试从 app-config.json 中提取配置生成 app.json
-func recoverAppJSON(outputDir string) error {
-	appConfigPath := filepath.Join(outputDir, "app-config.json")
-	appJSONPath := filepath.Join(outputDir, "app.json")
-
-	// 如果 app.json 已存在，或 app-config.json 不存在，则跳过
-	if _, err := os.Stat(appJSONPath); err == nil {
-		return nil
-	}
-	if _, err := os.Stat(appConfigPath); os.IsNotExist(err) {
-		return nil
-	}
-
-	data, err := os.ReadFile(appConfigPath)
-	if err != nil {
-		return err
-	}
-
-	var config map[string]interface{}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil // 不是有效的 JSON，直接跳过
-	}
-
-	appJSON := make(map[string]interface{})
-
-	if pages, ok := config["pages"]; ok {
-		appJSON["pages"] = pages
-	}
-	if subPackages, ok := config["subPackages"]; ok {
-		appJSON["subPackages"] = subPackages
-	} else if subpackages, ok := config["subpackages"]; ok {
-		appJSON["subPackages"] = subpackages // 兼容更小写
-	}
-	if global, ok := config["global"].(map[string]interface{}); ok {
-		if window, ok := global["window"]; ok {
-			appJSON["window"] = window
-		}
-	}
-	if tabBar, ok := config["tabBar"]; ok {
-		appJSON["tabBar"] = tabBar
-	}
-	if networkTimeout, ok := config["networkTimeout"]; ok {
-		appJSON["networkTimeout"] = networkTimeout
-	}
-
-	if len(appJSON) == 0 {
-		return nil
-	}
-
-	appJSONData, err := json.MarshalIndent(appJSON, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(appJSONPath, appJSONData, 0644)
-}
-
 // extractFile 提取单个文件
 func extractFile(data []byte, file model.FileEntry, outputDir string, beautify bool) error {
-	// 检查边界
-	if file.Offset+file.Size > uint32(len(data)) {
-		return fmt.Errorf("file out of bounds: %s (offset=%d, size=%d, dataLen=%d)",
-			file.Name, file.Offset, file.Size, len(data))
+	if err := validateFileBounds(file, len(data)); err != nil {
+		return err
 	}
+	start := int(file.Offset)
+	end := start + int(file.Size)
 
 	// 读取文件内容
-	content := make([]byte, file.Size)
-	copy(content, data[file.Offset:file.Offset+file.Size])
+	content := make([]byte, int(file.Size))
+	copy(content, data[start:end])
 
 	// 美化代码
 	if beautify {
@@ -296,17 +266,33 @@ func extractFile(data []byte, file model.FileEntry, outputDir string, beautify b
 	}
 
 	// 创建完整路径
-	fullPath := filepath.Join(outputDir, file.Name)
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+	fullPath, err := safeOutputPath(outputDir, file.Name)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0700); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
 	// 写入文件
-	if err := os.WriteFile(fullPath, content, 0644); err != nil {
+	if err := os.WriteFile(fullPath, content, 0600); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 
 	return nil
+}
+
+func validateFileBounds(file model.FileEntry, dataLen int) error {
+	end := uint64(file.Offset) + uint64(file.Size)
+	if uint64(file.Offset) > uint64(dataLen) || end > uint64(dataLen) {
+		return fmt.Errorf("file out of bounds: %s (offset=%d, size=%d, dataLen=%d)",
+			file.Name, file.Offset, file.Size, dataLen)
+	}
+	return nil
+}
+
+func safeOutputPath(outputDir, name string) (string, error) {
+	return storage.SafePackageOutputPath(outputDir, name)
 }
 
 // beautifyContent 美化内容
@@ -332,7 +318,7 @@ func beautifyContent(content []byte, filename string) []byte {
 		if beautifyService != nil {
 			return beautifyService.Beautify(content, filename)
 		}
-		return beautifyHTML(content)
+		return content
 	case ".wxss", ".css":
 		// 使用新的美化服务
 		if beautifyService != nil {
@@ -375,72 +361,4 @@ func beautifyJSON(data []byte) []byte {
 		Width:    80,
 	})
 	return formatted
-}
-
-// beautifyHTML 美化 HTML
-func beautifyHTML(data []byte) []byte {
-	// 简单的 HTML 格式化
-	s := string(data)
-	s = strings.ReplaceAll(s, ">", ">\n")
-	s = strings.ReplaceAll(s, "<", "\n<")
-	// 清理多余空行
-	lines := strings.Split(s, "\n")
-	result := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			result = append(result, trimmed)
-		}
-	}
-	return []byte(strings.Join(result, "\n"))
-}
-
-// CreateZip 创建 ZIP 文件
-func CreateZip(sourceDir string, outputPath string) error {
-	file, err := os.Create(outputPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := zip.NewWriter(file)
-	defer writer.Close()
-
-	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if info.IsDir() {
-			return nil
-		}
-
-		// 创建相对路径
-		relPath, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return err
-		}
-
-		// 创建 ZIP 条目
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
-		}
-		header.Name = relPath
-		header.Method = zip.Deflate
-
-		writerFile, err := writer.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-
-		// 写入文件内容
-		fileData, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		_, err = writerFile.Write(fileData)
-		return err
-	})
 }

@@ -1,0 +1,7 @@
+{
+  "pages": ["pages/home/index"],
+  "sources": {
+    "pages": "app-config.json",
+    "window": "app-config.json"
+  }
+}

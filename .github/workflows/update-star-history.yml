@@ -1,0 +1,69 @@
+name: update-star-history
+
+on:
+  schedule:
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-star-history-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Refresh repository-owned Star chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Fetch Stargazers and generate both SVG themes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api \
+            --paginate \
+            --slurp \
+            --header 'Accept: application/vnd.github.star+json' \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/stargazers?per_page=100" |
+          node scripts/generate_star_history.mjs \
+            --input - \
+            --output-dir docs/assets \
+            --repository "${GITHUB_REPOSITORY}"
+
+      - name: Commit changed charts
+        run: |
+          set -euo pipefail
+          status_file="${RUNNER_TEMP}/star-history-status"
+          git status --porcelain -- \
+            docs/assets/star-history-light.svg \
+            docs/assets/star-history-dark.svg \
+            > "${status_file}"
+
+          if [[ ! -s "${status_file}" ]]; then
+            echo 'Star history charts are already current.' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
+            docs/assets/star-history-light.svg \
+            docs/assets/star-history-dark.svg
+          git commit -m 'docs: update Star growth chart'
+          git push
+          echo 'Updated the repository-owned Star history charts.' >> "${GITHUB_STEP_SUMMARY}"

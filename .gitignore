@@ -20,6 +20,9 @@ logs/
 
 # Environment variables
 .env
+.env.*
+!.env.example
+!**/.env.example
 .env.local
 .env.development.local
 .env.test.local
@@ -45,6 +48,7 @@ coverage/
 *.test
 
 # Package files
+*.wxapkg
 *.tgz
 *.tar.gz
 *.zip
@@ -55,9 +59,6 @@ coverage/
 /output/
 *.tmp
 
-# Docker
-.dockerignore
-
 # Go
 *.sum
 !backend/go.sum
@@ -66,6 +67,8 @@ go.work
 # Testing
 *.test
 *.prof
+.playwright-cli/
+.workbuddy/
 
 # Lock files (keep package-lock.json, ignore yarn.lock if using npm)
 package-lock.json.backup

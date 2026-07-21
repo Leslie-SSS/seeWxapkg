@@ -1,11 +1,194 @@
 const wu = require("./wuLib.js");
-const {getZ} = require("./wuRestoreZ.js");
+const {getZ, isUnresolvedValue} = require("./wuRestoreZ.js");
 const {wxsBeautify} = require("./wuJs.js");
-const fs = require('fs');
 const path = require("path");
 const esprima = require('esprima');
-const {VM} = require('vm2');
 const escodegen = require('escodegen');
+const {parseScript, propertyName, staticEvaluate} = require('./wuStatic.js');
+const {packageJoin, relativeContained, resolveContained} = require('./wuPaths.js');
+const diagnostics = require('./wuDiagnostics.js');
+
+function resolveWxmlOutput(root, candidate, source) {
+    return resolveContained(root, candidate, 'fallback.wxml.output_unsafe', source);
+}
+
+function sourceFunction(node, source, env) {
+    let returnValue;
+    if (node.body.type !== 'BlockStatement') {
+        try {
+            returnValue = staticEvaluate(node.body, env);
+        } catch (error) {
+            // A concise arrow may still depend on runtime data.
+        }
+        return {
+            __staticFunction: true,
+            returnValue,
+            source: source.slice(node.range[0], node.range[1]),
+            toString() {
+                return this.source;
+            }
+        };
+    }
+    const localEnv = Object.assign(Object.create(null), env);
+    let returnIsCertain = true;
+    for (const statement of node.body.body) {
+        if (statement.type === 'FunctionDeclaration' || statement.type === 'EmptyStatement') continue;
+        if (statement.type === 'VariableDeclaration') {
+            for (const declaration of statement.declarations) {
+                if (declaration.id.type !== 'Identifier' || !declaration.init) {
+                    returnIsCertain = false;
+                    break;
+                }
+                try {
+                    localEnv[declaration.id.name] = staticEvaluate(declaration.init, localEnv);
+                } catch (error) {
+                    returnIsCertain = false;
+                    break;
+                }
+            }
+            if (!returnIsCertain) break;
+            continue;
+        }
+        if (statement.type === 'IfStatement') {
+            try {
+                if (staticEvaluate(statement.test, localEnv) === false && !statement.alternate) continue;
+            } catch (error) {
+                // Dynamic control flow means a later direct return is uncertain.
+            }
+            returnIsCertain = false;
+            break;
+        }
+        if (statement.type === 'ReturnStatement') {
+            if (!statement.argument) break;
+            try {
+                returnValue = staticEvaluate(statement.argument, localEnv);
+            } catch (error) {
+                // A dynamic return value is expected for renderer functions.
+            }
+            break;
+        }
+        // Do not infer across loops, try/catch, nested blocks, calls, or
+        // assignments whose effect on the returned value is not proven.
+        returnIsCertain = false;
+        break;
+    }
+    if (!returnIsCertain) returnValue = undefined;
+    return {
+        __staticFunction: true,
+        returnValue,
+        source: source.slice(node.range[0], node.range[1]),
+        toString() {
+            return this.source;
+        }
+    };
+}
+
+function evaluateRegistryNode(node, source, env) {
+    if (!node) return undefined;
+    if (node.type === 'FunctionExpression' || node.type === 'ArrowFunctionExpression') {
+        return sourceFunction(node, source, env);
+    }
+    if (node.type === 'ObjectExpression') {
+        const result = Object.create(null);
+        for (const property of node.properties) {
+            if (property.type !== 'Property' || property.kind !== 'init') continue;
+            const key = property.computed
+                ? String(staticEvaluate(property.key, env))
+                : String(property.key.name ?? property.key.value);
+            if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+            result[key] = evaluateRegistryNode(property.value, source, env);
+        }
+        return result;
+    }
+    if (node.type === 'ArrayExpression') {
+        return node.elements.map(element => evaluateRegistryNode(element, source, env));
+    }
+    if (
+        node.type === 'CallExpression' &&
+        node.callee.type === 'Identifier' &&
+        node.callee.name === 'nv_require' &&
+        node.arguments.length > 0
+    ) {
+        return {
+            __staticFunction: true,
+            returnValue: staticEvaluate(node.arguments[0], env),
+            source: '',
+            toString() { return this.source; }
+        };
+    }
+    return staticEvaluate(node, env);
+}
+
+function extractWxmlRegistries(code) {
+    const ast = parseScript(code);
+    const env = Object.create(null);
+    const registries = {
+        d_: Object.create(null),
+        e_: Object.create(null),
+        f_: Object.create(null)
+    };
+
+    const registryNames = new Set(Object.keys(registries));
+
+    // Registry setup emitted by WeChat is a top-level straight-line sequence.
+    // Walking the whole AST would also collect assignments in uncalled helper
+    // functions and dead branches, corrupting the recovered file registry.
+    for (const statement of ast.body) {
+        if (statement.type === 'FunctionDeclaration') {
+            if (statement.id && registryNames.has(statement.id.name)) {
+                throw new Error(`WXML registry is shadowed: ${statement.id.name}`);
+            }
+            continue;
+        }
+        if (statement.type === 'EmptyStatement') continue;
+        if (statement.type === 'IfStatement') {
+            try {
+                if (staticEvaluate(statement.test, env) === false && !statement.alternate) continue;
+            } catch (error) {
+                // Fall through to the conservative failure below.
+            }
+            throw new Error('Unsupported WXML registry control flow');
+        }
+        if (statement.type === 'VariableDeclaration') {
+            for (const declaration of statement.declarations) {
+                if (declaration.id.type !== 'Identifier' || !declaration.init) continue;
+                if (registryNames.has(declaration.id.name)) {
+                    throw new Error(`WXML registry is shadowed: ${declaration.id.name}`);
+                }
+                try {
+                    env[declaration.id.name] = evaluateRegistryNode(declaration.init, code, env);
+                } catch (error) {
+                    // Dynamic runtime variables are intentionally ignored.
+                }
+            }
+            continue;
+        }
+        if (statement.type !== 'ExpressionStatement' || statement.expression.type !== 'AssignmentExpression') {
+            throw new Error(`Unsupported WXML registry statement: ${statement.type}`);
+        }
+        const node = statement.expression;
+        if (node.operator !== '=') throw new Error(`Unsupported WXML registry assignment: ${node.operator}`);
+        if (node.left.type === 'Identifier') {
+            if (registryNames.has(node.left.name)) throw new Error(`WXML registry is reassigned: ${node.left.name}`);
+            try {
+                env[node.left.name] = evaluateRegistryNode(node.right, code, env);
+            } catch (error) {
+                // Dynamic assignment.
+            }
+            continue;
+        }
+        if (node.left.type !== 'MemberExpression' || node.left.object.type !== 'Identifier') continue;
+        const registry = registries[node.left.object.name];
+        if (!registry) continue;
+        try {
+            registry[propertyName(node.left, env)] = evaluateRegistryNode(node.right, code, env);
+        } catch (error) {
+            console.warn('Skipping dynamic WXML registry entry:', error.message);
+        }
+    }
+
+    return {env, registries};
+}
 
 function analyze(core, z, namePool, xPool, fakePool = {}, zMulName = "0") {
     function anaRecursion(core, fakePool = {}) {
@@ -254,13 +437,62 @@ function analyze(core, z, namePool, xPool, fakePool = {}, zMulName = "0") {
     }
 }
 
-function wxmlify(str, isText) {
-    if (typeof str == "undefined" || str === null) return "Empty";//throw Error("Empty str in "+(isText?"text":"prop"));
-    if (isText) return str;//may have some bugs in some specific case(undocumented by tx)
-    else return str.replace(/"/g, '\\"');
+const UNRESOLVED_TEXT_COMMENT = '<!-- seewx-recovery: unresolved text omitted -->';
+const UNRESOLVED_ATTRIBUTES_COMMENT = '<!-- seewx-recovery: unresolved attributes omitted -->';
+
+function createWxmlRecoveryContext() {
+    return {
+        unresolvedTextCount: 0,
+        unresolvedAttributeCount: 0,
+        unresolvedAttributes: Object.create(null),
+        unresolvedEventAttributeCount: 0
+    };
 }
 
-function elemToString(elem, dep, moreInfo = false) {
+function isUnavailableValue(value) {
+    return typeof value === 'undefined' || value === null || isUnresolvedValue(value);
+}
+
+function isEventAttribute(name) {
+    return /^(?:(?:capture-)?(?:bind|catch)|mut-bind)(?::?[A-Za-z][\w-]*)$/i.test(name);
+}
+
+function recordUnresolvedText(context) {
+    context.unresolvedTextCount += 1;
+}
+
+function recordUnresolvedAttribute(context, name) {
+    context.unresolvedAttributeCount += 1;
+    context.unresolvedAttributes[name] = (context.unresolvedAttributes[name] || 0) + 1;
+    if (isEventAttribute(name)) context.unresolvedEventAttributeCount += 1;
+}
+
+function flushWxmlRecoveryDiagnostics(context, outputPath) {
+    const unresolvedCount = context.unresolvedTextCount + context.unresolvedAttributeCount;
+    if (unresolvedCount > 0) {
+        diagnostics.partial(
+            'fallback.wxml.unresolved_fragments',
+            `该文件有 ${unresolvedCount} 处运行时值无法安全静态还原（文本 ${context.unresolvedTextCount}，属性 ${context.unresolvedAttributeCount}）；已省略可见占位并用不渲染的注释标记，原始运行时代码仍保留。`,
+            outputPath,
+            {
+                count: unresolvedCount,
+                textCount: context.unresolvedTextCount,
+                attributeCount: context.unresolvedAttributeCount,
+                eventAttributeCount: context.unresolvedEventAttributeCount,
+                attributes: {...context.unresolvedAttributes},
+                marker: 'seewx-recovery',
+                runtimeSourcePreserved: true
+            }
+        );
+    }
+}
+
+function wxmlify(str, isText) {
+    if (isText) return String(str);//may have some bugs in some specific case(undocumented by tx)
+    else return String(str).replace(/"/g, '\\"');
+}
+
+function elemToString(elem, dep, moreInfo = false, recoveryContext = createWxmlRecoveryContext()) {
     const longerList = [];//put tag name which can't be <x /> style.
     const indent = ' '.repeat(4);
 
@@ -269,7 +501,7 @@ function elemToString(elem, dep, moreInfo = false) {
     }
 
     function elemRecursion(elem, dep) {
-        return elemToString(elem, dep, moreInfo);
+        return elemToString(elem, dep, moreInfo, recoveryContext);
     }
 
     function trimMerge(rets) {
@@ -290,6 +522,13 @@ function elemToString(elem, dep, moreInfo = false) {
     }
 
     if (isTextTag(elem)) {
+        if (isUnavailableValue(elem.content)) {
+            recordUnresolvedText(recoveryContext);
+            // A recovery comment is not a text node. Treating it as one would
+            // activate trimMerge's whitespace folding and remove known spaces
+            // immediately before or after an unresolved fragment.
+            return UNRESOLVED_TEXT_COMMENT;
+        }
         //In comment, you can use typify text node, which beautify its code, but may destroy ui.
         //So, we use a "hack" way to solve this problem by letting typify program stop when face textNode
         let str = new String(wxmlify(elem.content, true));
@@ -313,8 +552,25 @@ function elemToString(elem, dep, moreInfo = false) {
             return trimMerge(ret);
         }
     }
+    const unresolvedAttributes = [];
     let ret = indent.repeat(dep) + "<" + elem.tag;
-    for (let v in elem.v) ret += " " + v + (elem.v[v] !== null ? "=\"" + wxmlify(elem.v[v]) + "\"" : "");
+    for (let v in elem.v) {
+        const value = elem.v[v];
+        // A null attribute is the compiler's representation for a genuine
+        // boolean WXML attribute. Undefined values and explicit unresolved
+        // opcode markers, however, must not be presented as recovered source.
+        if (typeof value === 'undefined' || isUnresolvedValue(value)) {
+            unresolvedAttributes.push(v);
+            recordUnresolvedAttribute(recoveryContext, v);
+            continue;
+        }
+        // Dynamic event handlers such as bindtap="{{ handlerName }}" are valid
+        // WXML and are preserved without lowering recovery quality.
+        ret += " " + v + (value !== null ? "=\"" + wxmlify(value) + "\"" : "");
+    }
+    if (unresolvedAttributes.length > 0) {
+        ret = indent.repeat(dep) + UNRESOLVED_ATTRIBUTES_COMMENT + "\n" + ret;
+    }
     if (elem.son.length == 0) {
         if (longerList.includes(elem.tag)) return ret + " />\n";
         else return ret + "></" + elem.tag + ">\n";
@@ -326,13 +582,14 @@ function elemToString(elem, dep, moreInfo = false) {
     return trimMerge(rets);
 }
 
-function doWxml(state, dir, name, code, z, xPool, rDs, wxsList, moreInfo) {
+function doWxml(state, outputPath, code, z, xPool, rDs, wxsList, moreInfo, diagnosticPath = outputPath) {
+    const recoveryContext = createWxmlRecoveryContext();
     let rname = code.slice(code.lastIndexOf("return") + 6).replace(/[\;\}]/g, "").trim();
     code = code.slice(code.indexOf("\n"), code.lastIndexOf("return")).trim();
     let r = {son: []};
     analyze(esprima.parseScript(code).body, z, {[rname]: r}, xPool, {[rname]: r});
     let ans = [];
-    for (let elem of r.son) ans.push(elemToString(elem, 0, moreInfo));
+    for (let elem of r.son) ans.push(elemToString(elem, 0, moreInfo, recoveryContext));
     let result = [ans.join("")];
     for (let v in rDs) {
         state[0] = v;
@@ -348,23 +605,34 @@ function doWxml(state, dir, name, code, z, xPool, rDs, wxsList, moreInfo) {
         }
         let r = {tag: "template", v: {name: v}, son: []};
         analyze(esprima.parseScript(code).body, z, {[rname]: r}, xPool, {[rname]: r});
-        result.unshift(elemToString(r, 0, moreInfo));
+        result.unshift(elemToString(r, 0, moreInfo, recoveryContext));
     }
-    name = path.resolve(dir, name);
-    if (wxsList[name]) result.push(wxsList[name]);
-    wu.save(name, result.join(""));
+    if (wxsList[outputPath]) result.push(wxsList[outputPath]);
+    wu.save(outputPath, result.join(""));
+    flushWxmlRecoveryDiagnostics(recoveryContext, diagnosticPath);
 }
 
-function tryWxml(dir, name, code, z, xPool, rDs, ...args) {
-    console.log("Decompile " + name + "...");
+function tryWxml(root, outputPath, code, z, xPool, rDs, ...args) {
+    console.log("Decompile " + outputPath + "...");
     let state = [null];
+    const relativeOutput = path.relative(path.resolve(root), outputPath).split(path.sep).join('/');
     try {
-        doWxml(state, dir, name, code, z, xPool, rDs, ...args);
+        doWxml(state, outputPath, code, z, xPool, rDs, ...args, relativeOutput);
         console.log("Decompile success!");
     } catch (e) {
-        console.log("error on " + name + "(" + (state[0] === null ? "Main" : "Template-" + state[0]) + ")\nerr: ", e);
-        if (state[0] === null) wu.save(path.resolve(dir, name + ".ori.js"), code);
-        else wu.save(path.resolve(dir, name + ".tem-" + state[0] + ".ori.js"), rDs[state[0]].toString());
+        console.log("error on " + outputPath + "(" + (state[0] === null ? "Main" : "Template-" + state[0]) + ")\nerr: ", e);
+        diagnostics.partial('fallback.wxml.render_failed', `WXML render failed; static renderer source was preserved: ${e.message}`, relativeOutput);
+        const debugOutput = resolveContained(
+            root,
+            relativeOutput + (state[0] === null ? '.ori.js' : '.template.ori.js'),
+            'fallback.wxml.debug_output_unsafe',
+            outputPath
+        );
+        if (!debugOutput) return;
+        const debugContent = state[0] === null
+            ? code
+            : (rDs[state[0]] && typeof rDs[state[0]].toString === 'function' ? rDs[state[0]].toString() : code);
+        wu.save(debugOutput, debugContent);
     }
 }
 
@@ -372,59 +640,105 @@ function doWxs(code, name) {
     name = name || '';
     name = name.substring(0, name.lastIndexOf('/') + 1);
     const before = 'nv_module={nv_exports:{}};';
-    return wxsBeautify(code.slice(code.indexOf(before) + before.length, code.lastIndexOf('return nv_module.nv_exports;}')).replace(eval('/' + ('p_' + name).replace(/\//g, '\\/') + '/g'), '').replace(/nv\_/g, '').replace(/(require\(.*?\))\(\)/g,'$1'));
+    const prefix = 'p_' + name;
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return wxsBeautify(code.slice(code.indexOf(before) + before.length, code.lastIndexOf('return nv_module.nv_exports;}')).replace(new RegExp(escapedPrefix, 'g'), '').replace(/nv\_/g, '').replace(/(require\(.*?\))\(\)/g,'$1'));
 }
 
 function doFrame(name, cb, order, mainDir) {
     let moreInfo = order.includes("m");
-    wxsList = {};
+    let wxsList = {};
     wu.get(name, code => {
         getZ(code, z => {
             const before = "\nvar nv_require=function(){var nnm=";
             code = code.slice(code.lastIndexOf(before) + before.length, code.lastIndexOf("if(path&&e_[path]){"));
-            json = code.slice(0, code.indexOf("};") + 1);
+            const json = code.slice(0, code.indexOf("};") + 1);
             let endOfRequire = code.indexOf("()\r\n") + 4;
             if (endOfRequire == 4 - 1) endOfRequire = code.indexOf("()\n") + 3;
             code = code.slice(endOfRequire);
-            let rD = {}, rE = {}, rF = {}, requireInfo = {}, x, vm = new VM({
-                sandbox: {
-                    d_: rD, e_: rE, f_: rF, _vmRev_(data) {
-                        [x, requireInfo] = data;
-                    }, nv_require(path) {
-                        return () => path;
-                    }
-                }
-            });
-            let vmCode = code + "\n_vmRev_([x," + json + "])";
+            let rD = {}, rE = {}, rF = {}, requireInfo = {}, x = {};
             try {
-                vm.run(vmCode);
+                const extracted = extractWxmlRegistries(code);
+                rD = extracted.registries.d_;
+                rE = extracted.registries.e_;
+                rF = extracted.registries.f_;
+                if (extracted.env.x && typeof extracted.env.x === 'object') x = extracted.env.x;
+
+                if (json) {
+                    const wrapped = parseScript('(' + json + ')');
+                    requireInfo = evaluateRegistryNode(wrapped.body[0].expression, '(' + json + ')', extracted.env) || {};
+                }
             } catch (err) {
-                console.error("WXML extraction failed (VM run error). WXML files might be missing. Error:", err.message);
+                diagnostics.partial('fallback.wxml.registry_parse_failed', `WXML static registry extraction failed: ${err.message}`, name);
+                console.error("WXML static extraction failed. WXML files might be missing. Error:", err.message);
             }
             let dir = mainDir || path.dirname(name), pF = [];
-            for (let info in rF) if (typeof rF[info] == "function") {
-                let name = path.resolve(dir, (info[0] == '/' ? '.' : '') + info), ref = rF[info]();
-                pF[ref] = info;
-                wu.save(name, doWxs(requireInfo[ref].toString(), info));
-            }
-            for (let info in rF) if (typeof rF[info] == "object") {
-                let name = path.resolve(dir, (info[0] == '/' ? '.' : '') + info);
-                let res = [], now = rF[info];
-                for (let deps in now) {
-                    let ref = now[deps]();
-                    if (ref.includes(":")) res.push("<wxs module=\"" + deps + "\">\n" + doWxs(requireInfo[ref].toString()) + "\n</wxs>");
-                    else if (pF[ref]) res.push("<wxs module=\"" + deps + "\" src=\"" + wu.toDir(pF[ref], info) + "\" />");
-                    else res.push("<wxs module=\"" + deps + "\" src=\"" + wu.toDir(ref.slice(2), info) + "\" />");
-                    wxsList[name] = res.join("\n");
+            for (let info in rF) if (rF[info] && rF[info].__staticFunction) {
+                const safeInfo = relativeContained(dir, info, 'fallback.wxml.wxs_output_unsafe', name);
+                if (!safeInfo) continue;
+                const output = resolveContained(dir, safeInfo, 'fallback.wxml.wxs_output_unsafe', name);
+                if (!output) continue;
+                let ref = rF[info].returnValue;
+                if (typeof ref !== 'string') continue;
+                pF[ref] = safeInfo;
+                if (requireInfo[ref] && typeof requireInfo[ref].toString === 'function') {
+                    wu.save(output, doWxs(requireInfo[ref].toString(), safeInfo));
                 }
             }
-            for (let name in rE) tryWxml(dir, name, rE[name].f.toString(), z, x, rD[name], wxsList, moreInfo);
+            for (let info in rF) if (rF[info] && typeof rF[info] == "object" && !rF[info].__staticFunction) {
+                const safeInfo = relativeContained(dir, info, 'fallback.wxml.wxs_group_output_unsafe', name);
+                if (!safeInfo) continue;
+                const output = resolveContained(dir, safeInfo, 'fallback.wxml.wxs_group_output_unsafe', name);
+                if (!output) continue;
+                let res = [], now = rF[info];
+                for (let deps in now) {
+                    let ref = now[deps] && now[deps].__staticFunction ? now[deps].returnValue : undefined;
+                    if (typeof ref !== 'string') continue;
+                    const safeModuleName = String(deps).replace(/[&"<>]/g, character => ({'&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;'}[character]));
+                    if (ref.includes(":") && requireInfo[ref] && typeof requireInfo[ref].toString === 'function') {
+                        res.push("<wxs module=\"" + safeModuleName + "\">\n" + doWxs(requireInfo[ref].toString()) + "\n</wxs>");
+                    } else if (pF[ref]) {
+                        res.push("<wxs module=\"" + safeModuleName + "\" src=\"" + wu.toDir(pF[ref], safeInfo) + "\" />");
+                    } else {
+                        const reference = relativeContained(
+                            dir,
+                            packageJoin(safeInfo, ref.startsWith('./') ? ref.slice(2) : ref),
+                            'fallback.wxml.wxs_reference_unsafe',
+                            name
+                        );
+                        if (!reference) continue;
+                        res.push("<wxs module=\"" + safeModuleName + "\" src=\"" + wu.toDir(reference, safeInfo) + "\" />");
+                    }
+                    wxsList[output] = res.join("\n");
+                }
+            }
+            for (let entryName in rE) {
+                const renderer = rE[entryName] && rE[entryName].f;
+                if (!renderer || typeof renderer.toString !== 'function') continue;
+                const output = resolveWxmlOutput(dir, entryName, name);
+                if (!output) continue;
+                tryWxml(dir, output, renderer.toString(), z, x, rD[entryName] || {}, wxsList, moreInfo);
+            }
+            if (Object.keys(rE).length === 0) {
+                diagnostics.partial('fallback.wxml.no_static_entries', 'No statically recoverable WXML renderer entries were found; runtime bundle was preserved.', name);
+            }
             cb({[name]: 4});
         });
     });
 }
 
-module.exports = {doFrame: doFrame};
+module.exports = {
+    doFrame: doFrame,
+    resolveWxmlOutput,
+    _internals: {
+        createWxmlRecoveryContext,
+        elemToString,
+        extractWxmlRegistries,
+        flushWxmlRecoveryDiagnostics,
+        isEventAttribute,
+        sourceFunction
+    }
+};
 if (require.main === module) {
     wu.commandExecute(doFrame, "Restore wxml files.\n\n<files...>\n\n<files...> restore wxml file from page-frame.html or app-wxss.js.");
 }

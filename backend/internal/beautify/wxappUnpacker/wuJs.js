@@ -1,11 +1,23 @@
 const wu = require("./wuLib.js");
 const path = require("path");
 const UglifyJS = require("uglify-es");
-const {js_beautify} = require("js-beautify");
-const {VM} = require('vm2');
+const {extractDefineModules, safeResolve} = require('./wuStatic.js');
+const diagnostics = require('./wuDiagnostics.js');
 
 function jsBeautify(code) {
-    return UglifyJS.minify(code, {mangle: false, compress: false, output: {beautify: true, comments: true}}).code;
+    try {
+        const result = UglifyJS.minify(code, {
+            mangle: false,
+            compress: false,
+            output: {beautify: true, comments: true}
+        });
+        if (result.error || typeof result.code !== 'string') throw result.error || new Error('No formatter output');
+        return result.code;
+    } catch (error) {
+        // Never feed untrusted code to an execution-based unpacker. Preserve it
+        // byte-for-byte when the static formatter cannot parse the syntax.
+        return code;
+    }
 }
 
 function splitJs(name, cb, mainDir) {
@@ -16,43 +28,32 @@ function splitJs(name, cb, mainDir) {
     }
     wu.get(name, code => {
         let needDelList = {};
-        let vm = new VM({
-            sandbox: {
-                require() {
-                },
-                define(name, func) {
-                    let code = func.toString();
-                    code = code.slice(code.indexOf("{") + 1, code.lastIndexOf("}") - 1).trim();
-                    let bcode = code;
-                    if (code.startsWith('"use strict";') || code.startsWith("'use strict';")) code = code.slice(13);
-                    else if ((code.startsWith('(function(){"use strict";') || code.startsWith("(function(){'use strict';")) && code.endsWith("})();")) code = code.slice(25, -5);
-                    let res = jsBeautify(code);
-                    if (typeof res == "undefined") {
-                        console.log("Fail to delete 'use strict' in \"" + name + "\".");
-                        res = jsBeautify(bcode);
-                    }
-                    console.log(dir, name);
-                    needDelList[path.resolve(dir, name)] = -8;
-                    wu.save(path.resolve(dir, name), jsBeautify(res));
-                },
-                definePlugin() {
-                },
-                requirePlugin() {
-                }
+        try {
+            const modules = extractDefineModules(code);
+            for (const module of modules) {
+                const output = safeResolve(dir, module.name);
+                console.log('Static JS module:', output);
+                needDelList[output] = -8;
+                wu.save(output, jsBeautify(module.body.trim()));
             }
-        });
-        if (isSubPkg) {
-            code = code.slice(code.indexOf("define("));
+            if (modules.length > 0) {
+                needDelList[path.resolve(name)] = 8;
+                console.log(`Statically split ${modules.length} module(s) from "${name}".`);
+            } else {
+                needDelList[path.resolve(name)] = 0;
+                diagnostics.partial('fallback.js.no_static_modules', 'No statically recoverable define() modules were found; the original bundle was preserved.', name);
+                console.warn(`No statically recoverable define() modules found in "${name}"; bundle preserved.`);
+            }
+        } catch (error) {
+            needDelList[path.resolve(name)] = 0;
+            diagnostics.partial('fallback.js.static_parse_failed', `Static JavaScript split failed; the original bundle was preserved: ${error.message}`, name);
+            console.error(`Static JS split failed for "${name}"; bundle preserved:`, error.message);
         }
-        console.log('splitJs: ' + name);
-        vm.run(code);
-        console.log("Splitting \"" + name + "\" done.");
-        if (!needDelList[name]) needDelList[name] = 8;
         cb(needDelList);
     });
 }
 
-module.exports = {jsBeautify: jsBeautify, wxsBeautify: js_beautify, splitJs: splitJs};
+module.exports = {jsBeautify: jsBeautify, wxsBeautify: jsBeautify, splitJs: splitJs};
 if (require.main === module) {
     wu.commandExecute(splitJs, "Split and beautify weapp js file.\n\n<files...>\n\n<files...> js files to split and beautify.");
 }

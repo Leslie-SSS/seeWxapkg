@@ -1,0 +1,153 @@
+name: seewxapkg
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?set BACKEND_IMAGE to an immutable release tag}
+    container_name: seewxapkg-backend
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: node
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    stop_grace_period: 2m
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      MAX_UPLOAD_SIZE: 52428800
+      TEMP_DIR: /data/tasks
+      OUTPUT_DIR: /data/output
+      TASK_REPO_DRIVER: file
+      QUEUE_DRIVER: file
+      MAX_CONCURRENT_TASKS: 1
+      # Formatting runs only in the worker container.
+      BEAUTIFY_ENABLED: "false"
+      DEOBFUSCATE_ENABLED: "false"
+      BEAUTIFY_TIMEOUT: 30
+      BEAUTIFY_MAX_FILE_SIZE: 8388608
+      BEAUTIFY_FAILURE_LIMIT: 5
+      NATIVE_RECOVER_ENABLED: "true"
+      FALLBACK_RECOVER_ENABLED: "true"
+      VERIFICATION_ENABLED: "true"
+      REPORT_ENABLED: "true"
+      NODE_EXEC_TIMEOUT_SECONDS: 120
+      NODE_EXEC_MEMORY_MB: 512
+      RETAIN_ARTIFACTS_HOURS: 72
+      TZ: Asia/Shanghai
+    volumes:
+      - backend-tasks:/data/tasks
+      - backend-output:/data/output
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=1000,gid=1000
+    networks:
+      - seewxapkg-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  worker:
+    image: ${BACKEND_IMAGE:?set BACKEND_IMAGE to an immutable release tag}
+    container_name: seewxapkg-worker
+    command: ["./worker"]
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: node
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 1536m
+    cpus: 2.0
+    stop_grace_period: 2m
+    environment:
+      TEMP_DIR: /data/tasks
+      OUTPUT_DIR: /data/output
+      TASK_REPO_DRIVER: file
+      QUEUE_DRIVER: file
+      MAX_CONCURRENT_TASKS: 2
+      BEAUTIFY_ENABLED: "true"
+      DEOBFUSCATE_ENABLED: "false"
+      BEAUTIFY_TIMEOUT: 30
+      BEAUTIFY_MAX_FILE_SIZE: 8388608
+      BEAUTIFY_FAILURE_LIMIT: 5
+      NATIVE_RECOVER_ENABLED: "true"
+      FALLBACK_RECOVER_ENABLED: "true"
+      VERIFICATION_ENABLED: "true"
+      REPORT_ENABLED: "true"
+      NODE_EXEC_TIMEOUT_SECONDS: 120
+      NODE_EXEC_MEMORY_MB: 512
+      # The API owns retention cleanup for the shared volumes.
+      RETAIN_ARTIFACTS_HOURS: 0
+      TZ: Asia/Shanghai
+    volumes:
+      - backend-tasks:/data/tasks
+      - backend-output:/data/output
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=1000,gid=1000
+    network_mode: none
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?set FRONTEND_IMAGE to an immutable release tag}
+    container_name: seewxapkg-frontend
+    init: true
+    restart: unless-stopped
+    read_only: true
+    user: nginx
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 192m
+    cpus: 0.50
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m
+    networks:
+      - seewxapkg-network
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  backend-tasks:
+  backend-output:
+
+networks:
+  seewxapkg-network:
+    external: true

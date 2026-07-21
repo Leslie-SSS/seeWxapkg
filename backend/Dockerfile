@@ -1,5 +1,9 @@
 # 构建阶段 - Go
-FROM golang:1.23-alpine AS go-builder
+FROM golang:1.26-alpine AS go-builder
+
+ARG VERSION=2.0.0-dev
+ARG GIT_SHA=worktree
+ARG BUILD_DATE=unknown
 
 WORKDIR /app
 
@@ -10,52 +14,58 @@ COPY go.mod go.sum* ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o server ./cmd/server
+RUN BUILD_LDFLAGS="-s -w -X github.com/keepbuild/seewxapkg/internal/version.Version=${VERSION} -X github.com/keepbuild/seewxapkg/internal/version.Commit=${GIT_SHA} -X github.com/keepbuild/seewxapkg/internal/version.BuiltAt=${BUILD_DATE}" && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="$BUILD_LDFLAGS" -o server ./cmd/server && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="$BUILD_LDFLAGS" -o worker ./cmd/worker && \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="$BUILD_LDFLAGS" -o repack-src-only ./cmd/repack
 
 # 构建阶段 - Node.js dependencies
-FROM node:20-alpine AS node-builder
+FROM node:24-alpine AS node-builder
 
 WORKDIR /beautify
 
-COPY internal/beautify/package.json ./
-COPY internal/beautify/package-lock.json ./
+COPY internal/beautify/package.json internal/beautify/package-lock.json ./
 RUN npm ci --omit=dev
 
 WORKDIR /beautify/wxappUnpacker
-COPY internal/beautify/wxappUnpacker/package.json ./
-COPY internal/beautify/wxappUnpacker/package-lock.json ./
+COPY internal/beautify/wxappUnpacker/package.json internal/beautify/wxappUnpacker/package-lock.json ./
 RUN npm ci --omit=dev
 
 # 运行阶段
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
 # 复制 Go 服务
-COPY --from=go-builder /app/server .
+COPY --chown=node:node --from=go-builder /app/server .
+COPY --chown=node:node --from=go-builder /app/worker .
+COPY --chown=node:node --from=go-builder /app/repack-src-only .
 
 # 复制 Node.js 美化服务
-COPY --from=node-builder /beautify/node_modules ./internal/beautify/node_modules
-COPY --from=node-builder /beautify/wxappUnpacker/node_modules ./internal/beautify/wxappUnpacker/node_modules
-COPY internal/beautify/core.js ./internal/beautify/
-COPY internal/beautify/plugins ./internal/beautify/plugins
-COPY internal/beautify/wxappUnpacker ./internal/beautify/wxappUnpacker
-COPY internal/beautify/server.js ./internal/beautify/
-COPY internal/beautify/package.json ./internal/beautify/
-COPY internal/beautify/package-lock.json ./internal/beautify/
+COPY --chown=node:node --from=node-builder /beautify/node_modules ./internal/beautify/node_modules
+COPY --chown=node:node --from=node-builder /beautify/wxappUnpacker/node_modules ./internal/beautify/wxappUnpacker/node_modules
+COPY --chown=node:node internal/beautify/core.js internal/beautify/server.js internal/beautify/package.json ./internal/beautify/
+COPY --chown=node:node internal/beautify/plugins ./internal/beautify/plugins
+COPY --chown=node:node internal/beautify/runtime ./internal/beautify/runtime
+COPY --chown=node:node internal/beautify/wxappUnpacker/*.js ./internal/beautify/wxappUnpacker/
+COPY --chown=node:node internal/beautify/wxappUnpacker/LICENSE internal/beautify/wxappUnpacker/package.json ./internal/beautify/wxappUnpacker/
 
-# 创建必要目录
-RUN mkdir -p /tmp/seewxapkg /output
+# 安装时区数据，使生产环境的 TZ 配置同时作用于 Go 与 Node 日志。
+RUN apk add --no-cache tzdata && \
+    mkdir -p /tmp/seewxapkg /output /data/tasks /data/output && \
+    chown -R node:node /app /tmp/seewxapkg /output /data
 
 # 环境变量
-ENV BEAUTIFY_ENABLED=false
-ENV BEAUTIFY_TIMEOUT=5
-ENV BEAUTIFY_MAX_FILE_SIZE=512000
-ENV DEOBFUSCATE_ENABLED=true
+ENV BEAUTIFY_ENABLED=true
+ENV BEAUTIFY_TIMEOUT=30
+ENV BEAUTIFY_MAX_FILE_SIZE=8388608
+ENV DEOBFUSCATE_ENABLED=false
 ENV TEMP_DIR=/tmp/seewxapkg
 ENV OUTPUT_DIR=/output
 
 EXPOSE 8080 9090
+
+USER node
 
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD sh -c 'wget --no-verbose --tries=1 --spider "http://localhost:${SERVER_PORT:-9090}/api/health" || exit 1'

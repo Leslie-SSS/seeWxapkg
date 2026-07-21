@@ -1,6 +1,7 @@
 
 # 说明
 - 来自网友基于 [wxappUnpacker](https://github.com/qwerty472123/wxappUnpacker "wxappUnpacker") 改进的开源项目。
+- 本项目的安全版本只进行静态语法分析，不会通过 `vm2`、`eval` 或 `Function` 执行待恢复包中的代码。静态分析无法确认的内容会保留原始 bundle，并报告为部分恢复。
 
 # 安装
 ```
@@ -14,12 +15,8 @@ npm install esprima
 npm install css-tree
     
 npm install cssbeautify
-    
-npm install vm2
-    
+     
 npm install uglify-es
-    
-npm install js-beautify
 ```
 
 # 分包功能

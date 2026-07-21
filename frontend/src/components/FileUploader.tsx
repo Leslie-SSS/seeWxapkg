@@ -1,171 +1,208 @@
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 
 interface FileUploaderProps {
-  onFileSelect: (file: File) => void;
-  disabled?: boolean;
-  maxSize?: number;
+  file?: File | null
+  onFileSelect: (file: File | null) => void
+  disabled?: boolean
+  maxSize?: number
 }
 
 export const FileUploader: React.FC<FileUploaderProps> = ({
+  file = null,
   onFileSelect,
   disabled = false,
   maxSize = 50 * 1024 * 1024,
 }) => {
-  const [isDragging, setIsDragging] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [error, setError] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false)
+  const [error, setError] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dragDepthRef = useRef(0)
+  const descriptionId = useId()
+  const feedbackId = useId()
 
-  const validate = (file: File): string => {
-    if (!file.name.toLowerCase().endsWith('.wxapkg')) {
-      return '文件格式错误，请选择 .wxapkg 文件';
+  useEffect(() => {
+    if (!file && inputRef.current) {
+      inputRef.current.value = ''
     }
-    if (file.size > maxSize) {
-      return `文件过大，最大支持 ${formatSize(maxSize)}`;
-    }
-    return '';
-  };
+  }, [file])
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    if (!disabled) setIsDragging(true);
-  }, [disabled]);
+  const validate = useCallback(
+    (nextFile: File): string => {
+      if (!nextFile.name.toLowerCase().endsWith('.wxapkg')) {
+        return '文件格式不正确，请选择 .wxapkg 文件'
+      }
+      if (nextFile.size > maxSize) {
+        return `文件过大，最大支持 ${formatSize(maxSize)}`
+      }
+      return ''
+    },
+    [maxSize]
+  )
 
-  const handleDragLeave = useCallback(() => {
-    setIsDragging(false);
-  }, []);
+  const selectFile = useCallback(
+    (nextFile?: File) => {
+      if (!nextFile) return
+      const validationError = validate(nextFile)
+      if (validationError) {
+        setError(validationError)
+        if (inputRef.current) inputRef.current.value = ''
+        return
+      }
+      setError('')
+      onFileSelect(nextFile)
+    },
+    [onFileSelect, validate]
+  )
+
+  const handleDragOver = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault()
+      if (!disabled) setIsDragging(true)
+    },
+    [disabled]
+  )
+
+  const handleDragEnter = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault()
+      if (disabled) return
+      dragDepthRef.current += 1
+      setIsDragging(true)
+    },
+    [disabled]
+  )
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setIsDragging(false);
-
-      if (disabled) return;
-
-      const file = e.dataTransfer.files[0];
-      const err = validate(file);
-      if (err) {
-        setError(err);
-        setSelectedFile(null);
-        return;
-      }
-
-      setError('');
-      setSelectedFile(file);
-      onFileSelect(file);
+    (event: React.DragEvent) => {
+      event.preventDefault()
+      dragDepthRef.current = 0
+      setIsDragging(false)
+      if (!disabled) selectFile(event.dataTransfer.files[0])
     },
-    [disabled, maxSize, onFileSelect]
-  );
+    [disabled, selectFile]
+  )
 
-  const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (disabled || !e.target.files?.[0]) return;
+  const handleDragLeave = useCallback(() => {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setIsDragging(false)
+  }, [])
 
-      const file = e.target.files[0];
-      const err = validate(file);
-      if (err) {
-        setError(err);
-        setSelectedFile(null);
-        return;
-      }
-
-      setError('');
-      setSelectedFile(file);
-      onFileSelect(file);
-    },
-    [disabled, maxSize, onFileSelect]
-  );
-
-  const formatSize = (bytes: number): string => {
-    const units = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
-  };
+  const visualState = error ? 'error' : isDragging ? 'dragging' : file ? 'selected' : 'idle'
 
   return (
     <div
-      className={`relative overflow-hidden rounded-lg border-2 border-dashed transition-all duration-200 ${
+      data-state={visualState}
+      className={`upload-surface relative overflow-hidden rounded-2xl border transition ${
         error
-          ? 'border-red-500 bg-red-500/5'
+          ? 'border-red-400/70 bg-red-400/5'
           : isDragging
-          ? 'border-emerald-500 bg-emerald-500/5'
-          : 'border-slate-700 hover:border-emerald-500/40 hover:bg-slate-900/50'
-      } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            ? 'border-emerald-300 bg-emerald-400/10'
+            : file
+              ? 'border-emerald-400/50 bg-emerald-400/5'
+              : 'border-slate-500/80 bg-slate-950/55 hover:border-emerald-400/60 hover:bg-slate-900/75'
+      }`}
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onClick={() => !disabled && inputRef.current?.click()}
-      role="button"
-      tabIndex={disabled ? -1 : 0}
-      aria-label="Upload wxapkg file"
     >
       <input
         ref={inputRef}
         type="file"
         accept=".wxapkg"
-        onChange={handleChange}
         disabled={disabled}
-        className="sr-only"
+        className="hidden"
+        onChange={(event) => selectFile(event.target.files?.[0])}
       />
+      <button
+        type="button"
+        disabled={disabled}
+        aria-describedby={`${descriptionId} ${feedbackId}`}
+        onClick={() => inputRef.current?.click()}
+        className="upload-trigger group/upload relative z-10 flex min-h-56 w-full flex-col items-center justify-center gap-4 px-5 py-8 text-center disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-64"
+      >
+        <span
+          className={`upload-icon flex h-16 w-16 items-center justify-center rounded-2xl transition ${
+            error
+              ? 'bg-red-400/10 text-red-300'
+              : file
+                ? 'bg-emerald-400/20 text-emerald-300'
+                : 'bg-slate-800/90 text-slate-200'
+          }`}
+        >
+          {file ? (
+            <svg
+              aria-hidden="true"
+              className="h-7 w-7"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          ) : (
+            <svg
+              aria-hidden="true"
+              className="h-7 w-7"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+              />
+            </svg>
+          )}
+        </span>
 
-      <div className="p-8 text-center space-y-4">
-        {/* Icon */}
-        <div className="flex justify-center">
-          <div
-            className={`w-14 h-14 rounded-lg flex items-center justify-center transition-all ${
-              error
-                ? 'bg-red-500/10'
-                : isDragging
-                ? 'bg-emerald-500/20 scale-105'
-                : 'bg-slate-800'
-            }`}
-          >
-            {selectedFile && !error ? (
-              <svg className="w-7 h-7 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <svg
-                className={`w-7 h-7 ${error ? 'text-red-400' : 'text-slate-500'}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+        <span className="upload-copy min-w-0 max-w-full">
+          {file ? (
+            <>
+              <span
+                className="block max-w-full truncate font-mono text-sm font-medium text-emerald-300"
+                title={file.name}
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                />
-              </svg>
-            )}
-          </div>
-        </div>
+                {file.name}
+              </span>
+              <span id={descriptionId} className="mt-1 block text-sm text-slate-400">
+                {formatSize(file.size)} · 点击可更换文件
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="inline-flex items-center text-base font-semibold text-slate-50 sm:text-lg">
+                选择 wxapkg 文件
+              </span>
+              <span id={descriptionId} className="mt-1 block text-sm text-slate-400">
+                点击选择，或将文件拖到这里
+              </span>
+            </>
+          )}
+        </span>
 
-        {/* Text */}
-        {selectedFile && !error ? (
-          <div className="animate-slide-up">
-            <p className="font-mono text-sm text-emerald-400">{selectedFile.name}</p>
-            <p className="text-xs text-slate-500 mt-1">{formatSize(selectedFile.size)}</p>
-          </div>
-        ) : error ? (
-          <p className="text-sm text-red-400">{error}</p>
-        ) : (
-          <div>
-            <p className="text-sm text-slate-300">
-              拖拽 <span className="font-mono text-sm bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">.wxapkg</span> 文件到此处
-            </p>
-            <p className="text-xs text-slate-500 mt-1">或点击选择文件</p>
-          </div>
-        )}
-
-        {/* Hint */}
-        {!selectedFile && !error && (
-          <p className="text-xs text-slate-600">
-            最大支持 {formatSize(maxSize)}
-          </p>
-        )}
-      </div>
+        <span
+          id={feedbackId}
+          aria-live="polite"
+          className={`upload-feedback text-sm ${error ? 'text-red-300' : file ? 'text-emerald-300' : 'text-slate-400'}`}
+        >
+          {error || (file ? '文件已就绪' : `最大支持 ${formatSize(maxSize)}`)}
+        </span>
+      </button>
     </div>
-  );
-};
+  )
+}
+
+function formatSize(bytes: number): string {
+  if (bytes <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
+  return `${(bytes / Math.pow(1024, index)).toFixed(1)} ${units[index]}`
+}

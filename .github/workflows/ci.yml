@@ -1,0 +1,134 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install backend runtime deps
+        run: npm ci
+        working-directory: backend/internal/beautify
+      - name: Install fallback runtime deps
+        run: npm ci
+        working-directory: backend/internal/beautify/wxappUnpacker
+      - name: Run formatter tests
+        run: npm test
+        working-directory: backend/internal/beautify
+      - name: Audit formatter runtime dependencies
+        run: npm audit --omit=dev
+        working-directory: backend/internal/beautify
+      - name: Run fallback tests
+        run: npm test --if-present
+        working-directory: backend/internal/beautify/wxappUnpacker
+      - name: Audit fallback runtime dependencies
+        run: npm audit --omit=dev
+        working-directory: backend/internal/beautify/wxappUnpacker
+      - name: Run backend tests
+        run: go test -race ./...
+      - name: Run static analysis
+        run: go vet ./...
+      - name: Scan reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend deps
+        run: npm ci
+      - name: Run frontend tests
+        run: npm test
+      - name: Audit frontend dependencies
+        run: npm audit
+      - name: Build frontend
+        run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t seewxapkg-backend ./backend
+      - name: Build frontend image
+        run: |
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+          docker build -t seewxapkg-frontend ./frontend
+
+  compose-smoke:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Generate deterministic wxapkg fixture
+        run: |
+          node scripts/generate_compose_smoke_fixture.mjs "${RUNNER_TEMP}/compose-smoke.wxapkg"
+          node scripts/generate_compose_smoke_fixture.mjs "${RUNNER_TEMP}/compose-smoke-copy.wxapkg"
+          cmp "${RUNNER_TEMP}/compose-smoke.wxapkg" "${RUNNER_TEMP}/compose-smoke-copy.wxapkg"
+      - name: Start compose stack
+        run: docker compose up -d --build
+      - name: Wait for backend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:9090/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose logs backend-api backend-worker frontend
+          exit 1
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3004/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose logs frontend
+          exit 1
+      - name: Run cross-process decompile smoke through frontend API
+        run: node scripts/compose_decompile_smoke.mjs http://127.0.0.1:3004 "${RUNNER_TEMP}/compose-smoke.wxapkg"
+      - name: Show compose diagnostics after failure
+        if: failure()
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color backend-api backend-worker frontend
+      - name: Shutdown
+        if: always()
+        run: docker compose down -v
+
+  deployment-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate production compose
+        env:
+          BACKEND_IMAGE: example.invalid/seewxapkg-backend:ci
+          FRONTEND_IMAGE: example.invalid/seewxapkg-frontend:ci
+        run: docker compose -f deploy/production/docker-compose.yml config
