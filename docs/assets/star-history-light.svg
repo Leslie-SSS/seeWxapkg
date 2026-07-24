@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="480" viewBox="0 0 900 480" role="img" aria-labelledby="chart-title chart-description">
   <title id="chart-title">Leslie-SSS/seeWxapkg Star growth</title>
-  <desc id="chart-description">Leslie-SSS/seeWxapkg has 53 stars from 2026-01-31 through 2026-07-17.</desc>
+  <desc id="chart-description">Leslie-SSS/seeWxapkg has 54 stars from 2026-01-31 through 2026-07-22.</desc>
   <defs>
     <linearGradient id="background-gradient" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#ffffff" />
@@ -45,7 +45,7 @@
     <text x="77" y="54" class="eyebrow">STAR GROWTH</text>
     <text x="48" y="99" class="heading">Leslie-SSS/seeWxapkg</text>
 
-    <text x="852" y="65" text-anchor="end" class="stat">53</text>
+    <text x="852" y="65" text-anchor="end" class="stat">54</text>
     <text x="852" y="84" text-anchor="end" class="stat-label">TOTAL STARS</text>
     <text x="852" y="104" text-anchor="end" class="stat-label">2026-01 – 2026-07 · 7 MONTHS</text>
   </g>
@@ -67,27 +67,27 @@
     <text x="62" y="142.00" text-anchor="end" class="axis-label">60</text>
     <line x1="78.00" y1="138" x2="78.00" y2="398" class="grid-line vertical-grid" />
     <text x="78.00" y="432" text-anchor="start" class="axis-label">2026-01</text>
-    <line x1="228.18" y1="138" x2="228.18" y2="398" class="grid-line vertical-grid" />
-    <text x="228.18" y="432" text-anchor="middle" class="axis-label">2026-03</text>
-    <line x1="382.91" y1="138" x2="382.91" y2="398" class="grid-line vertical-grid" />
-    <text x="382.91" y="432" text-anchor="middle" class="axis-label">2026-04</text>
-    <line x1="533.09" y1="138" x2="533.09" y2="398" class="grid-line vertical-grid" />
-    <text x="533.09" y="432" text-anchor="middle" class="axis-label">2026-05</text>
-    <line x1="687.82" y1="138" x2="687.82" y2="398" class="grid-line vertical-grid" />
-    <text x="687.82" y="432" text-anchor="middle" class="axis-label">2026-06</text>
+    <line x1="228.23" y1="138" x2="228.23" y2="398" class="grid-line vertical-grid" />
+    <text x="228.23" y="432" text-anchor="middle" class="axis-label">2026-03</text>
+    <line x1="382.88" y1="138" x2="382.88" y2="398" class="grid-line vertical-grid" />
+    <text x="382.88" y="432" text-anchor="middle" class="axis-label">2026-04</text>
+    <line x1="533.12" y1="138" x2="533.12" y2="398" class="grid-line vertical-grid" />
+    <text x="533.12" y="432" text-anchor="middle" class="axis-label">2026-05</text>
+    <line x1="687.77" y1="138" x2="687.77" y2="398" class="grid-line vertical-grid" />
+    <text x="687.77" y="432" text-anchor="middle" class="axis-label">2026-06</text>
     <line x1="838.00" y1="138" x2="838.00" y2="398" class="grid-line vertical-grid" />
     <text x="838.00" y="432" text-anchor="end" class="axis-label">2026-07</text>
-    <path d="M 78.00 385.00 H 91.65 V 380.67 H 105.31 V 376.33 H 187.22 V 372.00 H 191.77 V 367.67 H 196.32 V 363.33 H 209.98 V 359.00 H 246.38 V 354.67 H 255.49 V 350.33 H 273.69 V 346.00 H 287.34 V 337.33 H 305.54 V 333.00 H 355.60 V 324.33 H 369.26 V 320.00 H 378.36 V 311.33 H 382.91 V 307.00 H 392.01 V 302.67 H 401.11 V 298.33 H 405.66 V 285.33 H 414.77 V 281.00 H 419.32 V 276.67 H 437.52 V 272.33 H 442.07 V 268.00 H 464.83 V 263.67 H 469.38 V 259.33 H 478.48 V 255.00 H 505.78 V 250.67 H 519.44 V 246.33 H 523.99 V 242.00 H 542.19 V 237.67 H 546.74 V 233.33 H 551.29 V 229.00 H 555.84 V 224.67 H 564.95 V 220.33 H 596.80 V 211.67 H 601.35 V 207.33 H 619.56 V 203.00 H 637.76 V 198.67 H 669.62 V 194.33 H 701.47 V 190.00 H 728.78 V 185.67 H 765.19 V 181.33 H 787.94 V 177.00 H 824.35 V 172.67 H 838.00 V 168.33 L 838.00 398 L 78.00 398 Z" fill="url(#area-gradient)" />
-    <path d="M 78.00 385.00 H 91.65 V 380.67 H 105.31 V 376.33 H 187.22 V 372.00 H 191.77 V 367.67 H 196.32 V 363.33 H 209.98 V 359.00 H 246.38 V 354.67 H 255.49 V 350.33 H 273.69 V 346.00 H 287.34 V 337.33 H 305.54 V 333.00 H 355.60 V 324.33 H 369.26 V 320.00 H 378.36 V 311.33 H 382.91 V 307.00 H 392.01 V 302.67 H 401.11 V 298.33 H 405.66 V 285.33 H 414.77 V 281.00 H 419.32 V 276.67 H 437.52 V 272.33 H 442.07 V 268.00 H 464.83 V 263.67 H 469.38 V 259.33 H 478.48 V 255.00 H 505.78 V 250.67 H 519.44 V 246.33 H 523.99 V 242.00 H 542.19 V 237.67 H 546.74 V 233.33 H 551.29 V 229.00 H 555.84 V 224.67 H 564.95 V 220.33 H 596.80 V 211.67 H 601.35 V 207.33 H 619.56 V 203.00 H 637.76 V 198.67 H 669.62 V 194.33 H 701.47 V 190.00 H 728.78 V 185.67 H 765.19 V 181.33 H 787.94 V 177.00 H 824.35 V 172.67 H 838.00 V 168.33" class="trend-glow" filter="url(#line-glow)" />
-    <path d="M 78.00 385.00 H 91.65 V 380.67 H 105.31 V 376.33 H 187.22 V 372.00 H 191.77 V 367.67 H 196.32 V 363.33 H 209.98 V 359.00 H 246.38 V 354.67 H 255.49 V 350.33 H 273.69 V 346.00 H 287.34 V 337.33 H 305.54 V 333.00 H 355.60 V 324.33 H 369.26 V 320.00 H 378.36 V 311.33 H 382.91 V 307.00 H 392.01 V 302.67 H 401.11 V 298.33 H 405.66 V 285.33 H 414.77 V 281.00 H 419.32 V 276.67 H 437.52 V 272.33 H 442.07 V 268.00 H 464.83 V 263.67 H 469.38 V 259.33 H 478.48 V 255.00 H 505.78 V 250.67 H 519.44 V 246.33 H 523.99 V 242.00 H 542.19 V 237.67 H 546.74 V 233.33 H 551.29 V 229.00 H 555.84 V 224.67 H 564.95 V 220.33 H 596.80 V 211.67 H 601.35 V 207.33 H 619.56 V 203.00 H 637.76 V 198.67 H 669.62 V 194.33 H 701.47 V 190.00 H 728.78 V 185.67 H 765.19 V 181.33 H 787.94 V 177.00 H 824.35 V 172.67 H 838.00 V 168.33" class="trend-line" />
+    <path d="M 78.00 385.00 H 91.26 V 380.67 H 104.51 V 376.33 H 184.05 V 372.00 H 188.47 V 367.67 H 192.88 V 363.33 H 206.14 V 359.00 H 241.49 V 354.67 H 250.33 V 350.33 H 268.00 V 346.00 H 281.26 V 337.33 H 298.93 V 333.00 H 347.53 V 324.33 H 360.79 V 320.00 H 369.63 V 311.33 H 374.05 V 307.00 H 382.88 V 302.67 H 391.72 V 298.33 H 396.14 V 285.33 H 404.98 V 281.00 H 409.40 V 276.67 H 427.07 V 272.33 H 431.49 V 268.00 H 453.58 V 263.67 H 458.00 V 259.33 H 466.84 V 255.00 H 493.35 V 250.67 H 506.60 V 246.33 H 511.02 V 242.00 H 528.70 V 237.67 H 533.12 V 233.33 H 537.53 V 229.00 H 541.95 V 224.67 H 550.79 V 220.33 H 581.72 V 211.67 H 586.14 V 207.33 H 603.81 V 203.00 H 621.49 V 198.67 H 652.42 V 194.33 H 683.35 V 190.00 H 709.86 V 185.67 H 745.21 V 181.33 H 767.30 V 177.00 H 802.65 V 172.67 H 815.91 V 168.33 H 838.00 V 164.00 L 838.00 398 L 78.00 398 Z" fill="url(#area-gradient)" />
+    <path d="M 78.00 385.00 H 91.26 V 380.67 H 104.51 V 376.33 H 184.05 V 372.00 H 188.47 V 367.67 H 192.88 V 363.33 H 206.14 V 359.00 H 241.49 V 354.67 H 250.33 V 350.33 H 268.00 V 346.00 H 281.26 V 337.33 H 298.93 V 333.00 H 347.53 V 324.33 H 360.79 V 320.00 H 369.63 V 311.33 H 374.05 V 307.00 H 382.88 V 302.67 H 391.72 V 298.33 H 396.14 V 285.33 H 404.98 V 281.00 H 409.40 V 276.67 H 427.07 V 272.33 H 431.49 V 268.00 H 453.58 V 263.67 H 458.00 V 259.33 H 466.84 V 255.00 H 493.35 V 250.67 H 506.60 V 246.33 H 511.02 V 242.00 H 528.70 V 237.67 H 533.12 V 233.33 H 537.53 V 229.00 H 541.95 V 224.67 H 550.79 V 220.33 H 581.72 V 211.67 H 586.14 V 207.33 H 603.81 V 203.00 H 621.49 V 198.67 H 652.42 V 194.33 H 683.35 V 190.00 H 709.86 V 185.67 H 745.21 V 181.33 H 767.30 V 177.00 H 802.65 V 172.67 H 815.91 V 168.33 H 838.00 V 164.00" class="trend-glow" filter="url(#line-glow)" />
+    <path d="M 78.00 385.00 H 91.26 V 380.67 H 104.51 V 376.33 H 184.05 V 372.00 H 188.47 V 367.67 H 192.88 V 363.33 H 206.14 V 359.00 H 241.49 V 354.67 H 250.33 V 350.33 H 268.00 V 346.00 H 281.26 V 337.33 H 298.93 V 333.00 H 347.53 V 324.33 H 360.79 V 320.00 H 369.63 V 311.33 H 374.05 V 307.00 H 382.88 V 302.67 H 391.72 V 298.33 H 396.14 V 285.33 H 404.98 V 281.00 H 409.40 V 276.67 H 427.07 V 272.33 H 431.49 V 268.00 H 453.58 V 263.67 H 458.00 V 259.33 H 466.84 V 255.00 H 493.35 V 250.67 H 506.60 V 246.33 H 511.02 V 242.00 H 528.70 V 237.67 H 533.12 V 233.33 H 537.53 V 229.00 H 541.95 V 224.67 H 550.79 V 220.33 H 581.72 V 211.67 H 586.14 V 207.33 H 603.81 V 203.00 H 621.49 V 198.67 H 652.42 V 194.33 H 683.35 V 190.00 H 709.86 V 185.67 H 745.21 V 181.33 H 767.30 V 177.00 H 802.65 V 172.67 H 815.91 V 168.33 H 838.00 V 164.00" class="trend-line" />
     <circle cx="78.00" cy="385.00" r="4" class="point-marker" />
-    <circle cx="838.00" cy="168.33" r="10" class="point-halo" />
-    <circle cx="838.00" cy="168.33" r="5" class="point-marker" />
+    <circle cx="838.00" cy="164.00" r="10" class="point-halo" />
+    <circle cx="838.00" cy="164.00" r="5" class="point-marker" />
   </g>
 
   <g aria-hidden="true">
     <circle cx="50" cy="446" r="4" fill="#059669" />
     <text x="62" y="450" class="footer-label">Cumulative stars by UTC date</text>
-    <text x="850" y="450" text-anchor="end" class="footer-label">Data through 2026-07-17 · UTC</text>
+    <text x="850" y="450" text-anchor="end" class="footer-label">Data through 2026-07-22 · UTC</text>
   </g>
 </svg>
