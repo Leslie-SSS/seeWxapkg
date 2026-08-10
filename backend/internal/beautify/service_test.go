@@ -154,6 +154,69 @@ func TestServiceSmokeStartsNodeSidecar(t *testing.T) {
 	}
 }
 
+func TestServiceRestartsDeadSidecar(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not available")
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+
+	cfg := ConfigFromParams(true, 3, 8*1024*1024, 5, false)
+	cfg.BeautifyDir = wd
+	cfg.ServerPort = freePort(t)
+
+	svc, err := NewService(cfg)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+	defer func() {
+		if err := svc.Stop(); err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	}()
+
+	if !svc.IsHealthy() {
+		t.Fatalf("expected healthy service")
+	}
+
+	// Simulate a sidecar crash (e.g. an OOM kill) by killing the Node process.
+	svc.processMu.Lock()
+	sidecar := svc.cmd
+	svc.processMu.Unlock()
+	if sidecar == nil || sidecar.Process == nil {
+		t.Fatalf("sidecar process not tracked")
+	}
+	if err := sidecar.Process.Kill(); err != nil {
+		t.Fatalf("kill sidecar: %v", err)
+	}
+	_, _ = sidecar.Process.Wait()
+
+	// Wait until the probe actually observes the dead sidecar.
+	deadline := time.Now().Add(5 * time.Second)
+	for svc.checkHealth() {
+		if time.Now().After(deadline) {
+			t.Fatalf("sidecar still responding after kill")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	svc.checkAndRecover()
+
+	if !svc.IsHealthy() {
+		t.Fatalf("expected sidecar to be restarted and healthy")
+	}
+
+	// The restarted sidecar must actually serve a beautify request.
+	input := []byte(`Page({data:{list:[]},onLoad:function(e){var t=this;console.log(e)}})`)
+	output := string(svc.Beautify(input, "index.js"))
+	if !strings.Contains(output, "onLoad: function (e)") {
+		t.Fatalf("expected formatted output after restart, got:\n%s", output)
+	}
+}
+
 func TestUnhealthyServiceDoesNotConsumeHalfOpenProbe(t *testing.T) {
 	breaker := NewCircuitBreakerWithConfig(CircuitBreakerConfig{
 		FailureThreshold: 1,

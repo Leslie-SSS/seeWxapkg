@@ -25,6 +25,8 @@ docker compose ps
 
 以上命令应在本目录执行。继续下一步前，确认 `backend`、`worker`、`frontend` 均为 `healthy`。
 
+> Worker 无网络栈且不暴露 HTTP 端口，其健康检查探测 `worker` 进程本身（而非可选的 3001 美化 sidecar）；进程退出时容器会自动重启。
+
 ## 接入外部 Nginx 网关
 
 推荐在网关自己的 Compose 中持久声明项目专用网络和只读配置挂载；下面的 `gateway`、容器路径及宿主机绝对路径应按实际部署替换，并保留网关原有网络：

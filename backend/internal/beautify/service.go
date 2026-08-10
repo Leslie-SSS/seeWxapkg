@@ -28,6 +28,10 @@ type Service struct {
 	maxFileSize int
 	deobfuscate bool
 
+	// Sidecar start parameters, kept for crash recovery.
+	beautifyDir string
+	serverPort  int
+
 	// Process management
 	cmd       *exec.Cmd
 	processMu sync.Mutex
@@ -117,6 +121,8 @@ func NewService(cfg Config) (*Service, error) {
 		timeout:        cfg.Timeout,
 		maxFileSize:    cfg.MaxFileSize,
 		deobfuscate:    cfg.Deobfuscate,
+		beautifyDir:    cfg.BeautifyDir,
+		serverPort:     cfg.ServerPort,
 		circuitBreaker: cb,
 		healthy:        false,
 		stopCheck:      make(chan struct{}),
@@ -192,13 +198,19 @@ func (s *Service) startServer(beautifyDir string, port int) error {
 	if s.deobfuscate {
 		deobfuscateStr = "true"
 	}
+	// The pool size is operator-tunable (fewer workers lower peak memory);
+	// the container env wins over the baked default of two.
+	workers := os.Getenv("BEAUTIFY_WORKERS")
+	if workers == "" {
+		workers = "2"
+	}
 	cmd.Env = append(os.Environ(),
 		fmt.Sprintf("BEAUTIFY_PORT=%d", port),
 		"BEAUTIFY_HOST=127.0.0.1",
 		fmt.Sprintf("MAX_CONTENT_SIZE=%d", s.maxFileSize),
 		fmt.Sprintf("BEAUTIFY_JOB_TIMEOUT_MS=%d", s.timeout.Milliseconds()),
-		"BEAUTIFY_WORKERS=2",
 		"BEAUTIFY_QUEUE_SIZE=32",
+		fmt.Sprintf("BEAUTIFY_WORKERS=%s", workers),
 		fmt.Sprintf("DEOBFUSCATE_ENABLED=%s", deobfuscateStr),
 	)
 
@@ -253,7 +265,9 @@ func (s *Service) checkHealth() bool {
 	return resp.StatusCode == 200
 }
 
-// healthCheckLoop periodically checks server health
+// healthCheckLoop periodically checks server health and restarts the sidecar
+// when it has died, so a single crash (e.g. an OOM kill) does not silently
+// disable beautification until the whole worker is restarted.
 func (s *Service) healthCheckLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -261,16 +275,45 @@ func (s *Service) healthCheckLoop() {
 	for {
 		select {
 		case <-ticker.C:
-			healthy := s.checkHealth()
-			s.setHealthy(healthy)
-
-			if !healthy && s.enabled {
-				log.Println("[Beautify] Server unhealthy, circuit breaker may engage")
-			}
+			s.checkAndRecover()
 		case <-s.stopCheck:
 			return
 		}
 	}
+}
+
+// checkAndRecover probes the sidecar and starts a fresh one when the probe
+// fails. The 30s tick of the calling loop acts as natural restart backoff.
+func (s *Service) checkAndRecover() {
+	if s.checkHealth() {
+		s.setHealthy(true)
+		return
+	}
+	s.setHealthy(false)
+	if !s.enabled {
+		log.Println("[Beautify] Server unhealthy")
+		return
+	}
+	log.Println("[Beautify] Server unhealthy, restarting sidecar")
+	if err := s.restartServer(); err != nil {
+		log.Printf("[Beautify] Sidecar restart failed (%T)", err)
+	}
+}
+
+// restartServer stops any stale sidecar process and starts a fresh one.
+func (s *Service) restartServer() error {
+	s.processMu.Lock()
+	oldCmd := s.cmd
+	s.cmd = nil
+	s.processMu.Unlock()
+
+	if oldCmd != nil && oldCmd.Process != nil {
+		_ = oldCmd.Process.Kill()
+		_, _ = oldCmd.Process.Wait()
+		log.Println("[Beautify] Stopped stale sidecar process")
+	}
+
+	return s.startServer(s.beautifyDir, s.serverPort)
 }
 
 // setHealthy sets the health status

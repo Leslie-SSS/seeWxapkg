@@ -101,7 +101,10 @@ services:
       - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=1000,gid=1000
     network_mode: none
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/health"]
+      # The worker exposes no HTTP endpoint and has no network stack. Probe the
+      # worker process itself instead of the optional beautify sidecar on port
+      # 3001, whose absence must not mark a functioning worker unhealthy.
+      test: ["CMD-SHELL", "pidof worker >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 4
