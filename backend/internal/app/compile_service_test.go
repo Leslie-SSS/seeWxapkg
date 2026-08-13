@@ -69,7 +69,7 @@ func TestDetermineFinalStatusPartialOnWXMLQualityFailureWithoutDeepRecovery(t *t
 	status, code, message := determineFinalStatus(
 		false,
 		&verify.ManifestVerifyResult{Success: true, PageCount: 1},
-		&verify.ArtifactVerifyResult{Success: false, WXMLQualityPassed: false, WXMLQualityIssueFiles: 1, TotalPages: 1},
+		&verify.ArtifactVerifyResult{Success: false, WXMLQualityPassed: false, WXMLQualityIssueFiles: 1, TotalPages: 1, WXMLFiles: 5},
 		false,
 	)
 	if status != task.TaskPartial || code != "" {
@@ -80,15 +80,36 @@ func TestDetermineFinalStatusPartialOnWXMLQualityFailureWithoutDeepRecovery(t *t
 	}
 }
 
-func TestDetermineFinalStatusAllowsShallowExtractionWithoutSourceTriplets(t *testing.T) {
-	status, code, _ := determineFinalStatus(
+func TestDetermineFinalStatusPartialWhenShallowExtractionFailsVerification(t *testing.T) {
+	// Verification grades the merged tree independently of the decompile
+	// toggle: a tree that fails verification (e.g. wxml=0) must not be
+	// reported as completed just because deep recovery was not requested.
+	status, code, message := determineFinalStatus(
 		false,
 		&verify.ManifestVerifyResult{Success: true, PageCount: 1},
-		&verify.ArtifactVerifyResult{Success: false, WXMLQualityPassed: true, TotalPages: 1},
+		&verify.ArtifactVerifyResult{Success: false, WXMLQualityPassed: true, TotalPages: 1, WXMLFiles: 1},
 		false,
 	)
-	if status != task.TaskCompleted || code != "" {
-		t.Fatalf("shallow extraction should not promise source triplets, got %s code=%s", status, code)
+	if status != task.TaskPartial || code != "" {
+		t.Fatalf("shallow extraction that fails verification must be partial, got %s code=%s", status, code)
+	}
+	if !strings.Contains(message, "需检查") {
+		t.Fatalf("expected generic partial message, got %q", message)
+	}
+}
+
+func TestDetermineFinalStatusExplicitMessageWhenWXMLMissing(t *testing.T) {
+	status, _, message := determineFinalStatus(
+		true,
+		&verify.ManifestVerifyResult{Success: true, PageCount: 3},
+		&verify.ArtifactVerifyResult{Success: false, TotalPages: 3, WXMLFiles: 0},
+		false,
+	)
+	if status != task.TaskPartial {
+		t.Fatalf("expected partial, got %s", status)
+	}
+	if !strings.Contains(message, "WXML") {
+		t.Fatalf("wxml=0 partial must name the missing template type, got %q", message)
 	}
 }
 
@@ -201,6 +222,26 @@ func TestFinalizeFailureKeepsRawCauseInternallyAndPublishesSafeEvent(t *testing.
 	for _, secret := range []string{"/data/tasks", "/data/output", "/Users"} {
 		if strings.Contains(stored.CurrentMessage, secret) || strings.Contains(*stored.ErrorMessage, secret) {
 			t.Fatalf("persisted terminal state exposed %q: %#v", secret, stored)
+		}
+	}
+	if stored.FailureCause == nil {
+		t.Fatalf("persisted failed task lost its failure cause: %#v", stored)
+	}
+	if !strings.Contains(*stored.FailureCause, "write") || !strings.Contains(*stored.FailureCause, "inspect") {
+		t.Fatalf("failureCause should retain the diagnostic text, got %q", *stored.FailureCause)
+	}
+	for _, secret := range []string{"/data/tasks", "/data/output", "/Users"} {
+		if strings.Contains(*stored.FailureCause, secret) {
+			t.Fatalf("persisted failureCause exposed %q: %#v", secret, stored)
+		}
+	}
+	longCause := errors.New(strings.Repeat("深层原因 ", 400))
+	extended := &task.Task{ID: "long-cause-task", Status: task.TaskQueued, CreatedAt: now, UpdatedAt: now}
+	_ = service.finalizeTask(context.Background(), extended, task.TaskFailed, "test_failed", rawMessage, longCause)
+	extendedStored, err := repo.Get(context.Background(), extended.ID)
+	if err == nil && extendedStored.FailureCause != nil {
+		if runes := []rune(*extendedStored.FailureCause); len(runes) > 500 {
+			t.Fatalf("failureCause not truncated to 500 runes: %d", len(runes))
 		}
 	}
 	if _, err := os.Stat(storage.AppIDSecretPath(dirs)); !os.IsNotExist(err) {

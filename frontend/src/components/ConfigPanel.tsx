@@ -7,6 +7,7 @@ interface ConfigPanelProps {
   setBeautify: (value: boolean) => void
   decompile: boolean
   setDecompile: (value: boolean) => void
+  requiresAppId?: boolean
   disabled?: boolean
 }
 
@@ -17,6 +18,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
   setBeautify,
   decompile,
   setDecompile,
+  requiresAppId = false,
   disabled = false,
 }) => {
   return (
@@ -68,6 +70,17 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
             </button>
           )}
         </div>
+        {requiresAppId && (
+          <div
+            className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100"
+            role="status"
+          >
+            <p className="font-semibold">检测到加密包</p>
+            <p className="mt-1 leading-6 text-slate-300">
+              该文件需要对应的小程序 AppID 才能解密，请在上方填写后重试。
+            </p>
+          </div>
+        )}
         <details open className="group">
           <summary className="inline-flex min-h-11 cursor-pointer list-none items-center gap-1.5 py-2 text-sm text-slate-400 underline-offset-4 hover:text-emerald-300 hover:underline marker:hidden">
             AppID 在哪里找？

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import App from './App'
+import App, { sniffEncryptedHeader } from './App'
 
 const { mockUseUpload, mockGetGithubStars } = vi.hoisted(() => ({
   mockUseUpload: vi.fn(),
@@ -160,5 +160,67 @@ describe('App connection recovery notice', () => {
 
     expect(screen.getByText('请选择文件，确认设置后再试一次。')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重新反编译' })).toBeDisabled()
+  })
+
+  it('explains encrypted-package failures from the backend error code and shows the detail', () => {
+    const idleState = {
+      isUploading: false,
+      progress: 0,
+      stage: '',
+      message: '',
+      status: 'idle',
+      error: undefined,
+      warning: undefined,
+      connectionInterrupted: false,
+      isComplete: false,
+      upload: vi.fn(),
+      reset: vi.fn(),
+    }
+    mockUseUpload.mockReturnValue(idleState)
+
+    const { container, rerender } = render(<App />)
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')
+    const file = new File(['package'], '__APP__.wxapkg')
+    fireEvent.change(input!, { target: { files: [file] } })
+
+    mockUseUpload.mockReturnValue({
+      ...idleState,
+      stage: 'failed',
+      status: 'failed',
+      errorCode: 'app_id_required',
+      error: '这是加密包，需要提供正确的小程序 AppID 才能解密',
+      errorDetail: '这是加密包，需要提供正确的小程序 AppID 才能解密（wx 开头 18 位）',
+    })
+    rerender(<App />)
+
+    expect(screen.getByText('这是加密包，需要填写正确的小程序 AppID。')).toBeInTheDocument()
+    expect(screen.getByText(/wx 开头 18 位/)).toBeInTheDocument()
+  })
+
+  it('detects the V1MMWX header of encrypted packages before upload', async () => {
+    // jsdom's Blob.slice() returns a partial Blob without arrayBuffer(); the
+    // browser API surface the sniffer relies on is restored here so the
+    // production code can be tested as-is.
+    function fileWithHeader(header: string, name = 'pkg.wxapkg'): File {
+      const file = new File([header + '\u0000'.repeat(64)], name)
+      const originalSlice = file.slice.bind(file)
+      file.slice = ((start?: number, end?: number) => {
+        const blob = originalSlice(start, end)
+        return Object.assign(blob, {
+          arrayBuffer: () =>
+            new Promise<ArrayBuffer>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => resolve(reader.result as ArrayBuffer)
+              reader.onerror = () => reject(reader.error)
+              reader.readAsArrayBuffer(blob)
+            }),
+        })
+      }) as typeof file.slice
+      return file
+    }
+
+    expect(await sniffEncryptedHeader(fileWithHeader('V1MMWX'))).toBe(true)
+    expect(await sniffEncryptedHeader(fileWithHeader('\u00be\u00ed\x00\x00\x00\x00'))).toBe(false)
+    expect(await sniffEncryptedHeader(null)).toBe(false)
   })
 })

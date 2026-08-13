@@ -74,6 +74,7 @@ type Task struct {
 	Diagnostics      []pkg.Diagnostic     `json:"diagnostics,omitempty"`
 	ErrorCode        *string              `json:"errorCode,omitempty"`
 	ErrorMessage     *string              `json:"errorMessage,omitempty"`
+	FailureCause     *string              `json:"failureCause,omitempty"`
 	Progress         int                  `json:"progress"`
 	CurrentStage     string               `json:"currentStage,omitempty"`
 	CurrentMessage   string               `json:"currentMessage,omitempty"`

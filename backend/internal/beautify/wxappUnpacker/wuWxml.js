@@ -92,11 +92,17 @@ function evaluateRegistryNode(node, source, env) {
         const result = Object.create(null);
         for (const property of node.properties) {
             if (property.type !== 'Property' || property.kind !== 'init') continue;
-            const key = property.computed
-                ? String(staticEvaluate(property.key, env))
-                : String(property.key.name ?? property.key.value);
-            if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
-            result[key] = evaluateRegistryNode(property.value, source, env);
+            try {
+                const key = property.computed
+                    ? String(staticEvaluate(property.key, env))
+                    : String(property.key.name ?? property.key.value);
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+                result[key] = evaluateRegistryNode(property.value, source, env);
+            } catch (error) {
+                // A single dynamic value inside a registry initializer must not
+                // discard the entries that did evaluate.
+                console.warn('Skipping dynamic WXML registry entry:', error.message);
+            }
         }
         return result;
     }
@@ -119,9 +125,65 @@ function evaluateRegistryNode(node, source, env) {
     return staticEvaluate(node, env);
 }
 
-function extractWxmlRegistries(code) {
-    const ast = parseScript(code);
+// mergeRegistryInit merges an object-literal initializer into a d_/e_/f_
+// registry entry by entry: one dynamic value must not fail the whole registry
+// extraction, mirroring the per-entry tolerance of member assignments.
+// Non-object inits (e.g. an undefined placeholder before member assignments)
+// are tolerated and leave the registry untouched.
+function mergeRegistryInit(registry, node, code, env) {
+    if (!node) return;
+    if (node.type === 'ObjectExpression') {
+        for (const property of node.properties) {
+            if (property.type !== 'Property' || property.kind !== 'init') continue;
+            try {
+                const key = property.computed
+                    ? String(staticEvaluate(property.key, env))
+                    : String(property.key.name ?? property.key.value);
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+                registry[key] = evaluateRegistryNode(property.value, code, env);
+            } catch (error) {
+                console.warn('Skipping dynamic WXML registry entry:', error.message);
+            }
+        }
+        return;
+    }
+    try {
+        const value = evaluateRegistryNode(node, code, env);
+        if (value && typeof value === 'object' && !Array.isArray(value)) {
+            for (const key of Object.keys(value)) {
+                if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+                registry[key] = value[key];
+            }
+        }
+    } catch (error) {
+        console.warn('Skipping dynamic WXML registry initializer:', error.message);
+    }
+}
+
+// collectTopLevelFunctions registers every top-level function declaration of
+// the full bundle (e.g. wxs modules compiled as `function np_0(){...}`). The
+// nnm require-map may reference them by bare identifier, and in some compiler
+// layouts the declarations sit BEFORE the nv_require bootstrap that doFrame
+// slices away, so registration must happen against the unsliced source.
+// Best-effort: unsupported header syntax degrades to an empty env.
+function collectTopLevelFunctions(code) {
     const env = Object.create(null);
+    try {
+        const ast = parseScript(code);
+        for (const statement of ast.body) {
+            if (statement.type === 'FunctionDeclaration' && statement.id) {
+                env[statement.id.name] = sourceFunction(statement, code, env);
+            }
+        }
+    } catch (error) {
+        // Header syntax beyond the registry walker's support.
+    }
+    return env;
+}
+
+function extractWxmlRegistries(code, initialEnv) {
+    const ast = parseScript(code);
+    const env = initialEnv ? Object.assign(Object.create(null), initialEnv) : Object.create(null);
     const registries = {
         d_: Object.create(null),
         e_: Object.create(null),
@@ -138,22 +200,39 @@ function extractWxmlRegistries(code) {
             if (statement.id && registryNames.has(statement.id.name)) {
                 throw new Error(`WXML registry is shadowed: ${statement.id.name}`);
             }
+            if (statement.id) {
+                // WeChat 4.x bundles declare wxs modules as bare top-level
+                // function declarations (function np_0(){...}) that the nnm
+                // require-map and the f_ registry reference by name. Register
+                // them so those identifier references resolve during static
+                // evaluation instead of failing the whole extraction.
+                env[statement.id.name] = sourceFunction(statement, code, env);
+            }
             continue;
         }
         if (statement.type === 'EmptyStatement') continue;
+        if (statement.type === 'BlockStatement') {
+            // A bare `{...}` at statement position is the nnm require-map data
+            // block when the IIFE invocation cut was unavailable; it carries no
+            // registry assignments.
+            continue;
+        }
         if (statement.type === 'IfStatement') {
-            try {
-                if (staticEvaluate(statement.test, env) === false && !statement.alternate) continue;
-            } catch (error) {
-                // Fall through to the conservative failure below.
-            }
-            throw new Error('Unsupported WXML registry control flow');
+            // Registry setup emitted by the compiler is straight-line.
+            // Conditional statements (such as the path dispatcher at the end
+            // of the bundle) carry no registry data, and a dynamic test must
+            // not fail the whole extraction.
+            continue;
         }
         if (statement.type === 'VariableDeclaration') {
             for (const declaration of statement.declarations) {
                 if (declaration.id.type !== 'Identifier' || !declaration.init) continue;
                 if (registryNames.has(declaration.id.name)) {
-                    throw new Error(`WXML registry is shadowed: ${declaration.id.name}`);
+                    // Some compiler shapes initialize a registry with an object
+                    // literal (`var d_ = {...}`); merge it in instead of treating
+                    // the declaration as a shadow.
+                    mergeRegistryInit(registries[declaration.id.name], declaration.init, code, env);
+                    continue;
                 }
                 try {
                     env[declaration.id.name] = evaluateRegistryNode(declaration.init, code, env);
@@ -169,7 +248,10 @@ function extractWxmlRegistries(code) {
         const node = statement.expression;
         if (node.operator !== '=') throw new Error(`Unsupported WXML registry assignment: ${node.operator}`);
         if (node.left.type === 'Identifier') {
-            if (registryNames.has(node.left.name)) throw new Error(`WXML registry is reassigned: ${node.left.name}`);
+            if (registryNames.has(node.left.name)) {
+                mergeRegistryInit(registries[node.left.name], node.right, code, env);
+                continue;
+            }
             try {
                 env[node.left.name] = evaluateRegistryNode(node.right, code, env);
             } catch (error) {
@@ -645,20 +727,114 @@ function doWxs(code, name) {
     return wxsBeautify(code.slice(code.indexOf(before) + before.length, code.lastIndexOf('return nv_module.nv_exports;}')).replace(new RegExp(escapedPrefix, 'g'), '').replace(/nv\_/g, '').replace(/(require\(.*?\))\(\)/g,'$1'));
 }
 
+// stripLeadingBraceStatement best-effort removes a leading `{...}` data block
+// (the nnm require-map literal) that would otherwise fail the script parse at
+// statement position. Returns the input unchanged on any uncertainty so the
+// caller falls back to the existing failure diagnostics.
+function stripLeadingBraceStatement(code) {
+    let i = 0;
+    while (i < code.length && /\s/.test(code[i])) i++;
+    if (code[i] !== '{') return code;
+    let depth = 0;
+    let quote = null;
+    let lineComment = false;
+    let blockComment = false;
+    for (; i < code.length; i++) {
+        const ch = code[i];
+        const next = code[i + 1];
+        if (lineComment) {
+            if (ch === '\n') lineComment = false;
+            continue;
+        }
+        if (blockComment) {
+            if (ch === '*' && next === '/') {
+                blockComment = false;
+                i++;
+            }
+            continue;
+        }
+        if (quote) {
+            if (ch === '\\') {
+                i++;
+                continue;
+            }
+            if (ch === quote) quote = null;
+            continue;
+        }
+        if (ch === '/' && next === '/') {
+            lineComment = true;
+            i++;
+            continue;
+        }
+        if (ch === '/' && next === '*') {
+            blockComment = true;
+            i++;
+            continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+            quote = ch;
+            continue;
+        }
+        if (ch === '{') {
+            depth++;
+        } else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                i++;
+                while (i < code.length && (code[i] === ';' || /\s/.test(code[i]))) i++;
+                return code.slice(i);
+            }
+        }
+    }
+    return code;
+}
+
 function doFrame(name, cb, order, mainDir) {
     let moreInfo = order.includes("m");
     let wxsList = {};
     wu.get(name, code => {
         getZ(code, z => {
+            // The nnm require-map object literal, `var nnm={<path>: <module fn>}`,
+            // may reference top-level function declarations (np_%d); the registry
+            // walk below resolves those from env.
+            const oriCode = code;
+            let json = '';
+            const nnmIdx = code.lastIndexOf('var nnm=');
+            if (nnmIdx !== -1) {
+                const jsonEnd = code.indexOf('};', nnmIdx + 'var nnm='.length);
+                if (jsonEnd !== -1) json = code.slice(nnmIdx + 'var nnm='.length, jsonEnd + 1);
+            }
+            // Slice out the require bootstrap and the trailing path dispatcher so
+            // the registry walk sees only the straight-line d_/e_/f_ assignments.
+            // When a marker is absent the whole file is kept; extractWxmlRegistries
+            // tolerates the dispatcher instead of failing the extraction.
             const before = "\nvar nv_require=function(){var nnm=";
-            code = code.slice(code.lastIndexOf(before) + before.length, code.lastIndexOf("if(path&&e_[path]){"));
-            const json = code.slice(0, code.indexOf("};") + 1);
-            let endOfRequire = code.indexOf("()\r\n") + 4;
-            if (endOfRequire == 4 - 1) endOfRequire = code.indexOf("()\n") + 3;
-            code = code.slice(endOfRequire);
+            const beforeIdx = oriCode.lastIndexOf(before);
+            if (beforeIdx !== -1) code = code.slice(beforeIdx + before.length);
+            const pathIdx = code.lastIndexOf("if(path&&e_[path]){");
+            if (pathIdx !== -1) code = code.slice(0, pathIdx);
+            // Cut through the nv_require IIFE invocation (`...}()`) so the walk
+            // starts at the d_/e_/f_ assignments. The search starts after the
+            // nnm map (offset by its length in the sliced code, or by its
+            // absolute position when the bootstrap marker is absent) so that a
+            // `()\n` inside a renderer body is never mistaken for the
+            // invocation. Without an nnm map the data block is stripped instead.
+            const searchFrom = beforeIdx !== -1
+                ? json.length + 1
+                : (nnmIdx !== -1 ? nnmIdx + json.length + 1 : -1);
+            let endOfRequire = -1;
+            if (searchFrom !== -1) {
+                endOfRequire = code.search(/\(\)(?:\r?\n)/, searchFrom);
+            }
+            if (endOfRequire !== -1) {
+                const newline = code.indexOf('\n', endOfRequire);
+                code = code.slice(newline + 1);
+            } else {
+                code = stripLeadingBraceStatement(code);
+            }
             let rD = {}, rE = {}, rF = {}, requireInfo = {}, x = {};
             try {
-                const extracted = extractWxmlRegistries(code);
+                const extracted = extractWxmlRegistries(code, collectTopLevelFunctions(oriCode));
                 rD = extracted.registries.d_;
                 rE = extracted.registries.e_;
                 rF = extracted.registries.f_;
@@ -733,10 +909,13 @@ module.exports = {
     _internals: {
         createWxmlRecoveryContext,
         elemToString,
+        evaluateRegistryNode,
         extractWxmlRegistries,
         flushWxmlRecoveryDiagnostics,
         isEventAttribute,
-        sourceFunction
+        sourceFunction,
+        stripLeadingBraceStatement,
+        collectTopLevelFunctions
     }
 };
 if (require.main === module) {

@@ -67,10 +67,13 @@ func TestReadFallbackStatusPropagatesPartialDiagnostics(t *testing.T) {
 	}
 }
 
-func TestReadFallbackStatusMissingIsConservativelyPartial(t *testing.T) {
+func TestReadFallbackStatusMissingDoesNotForcePartial(t *testing.T) {
+	// wuWxapkg.js does not write the status file; absence of bookkeeping must
+	// not downgrade an otherwise complete recovery. The warn diagnostic stays
+	// so operators can see the status gap.
 	status, diagnostics := readFallbackStatus(t.TempDir())
-	if status != "partial" || len(diagnostics) != 1 || diagnostics[0].Code != "recover.fallback.status_missing" {
-		t.Fatalf("missing status must be partial: status=%q diagnostics=%#v", status, diagnostics)
+	if status != "completed" || len(diagnostics) != 1 || diagnostics[0].Code != "recover.fallback.status_missing" {
+		t.Fatalf("missing status must default to completed with a warn: status=%q diagnostics=%#v", status, diagnostics)
 	}
 }
 

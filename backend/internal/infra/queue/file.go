@@ -112,6 +112,7 @@ func (q *FileQueue) handleJob(ctx context.Context, claimedPath string, job fileQ
 	}
 
 	job.Retries++
+	log.Printf("[Queue] task processing failed: %v", err)
 	job.LastError = "task processing failed"
 	targetDir := q.queueDir
 	if job.Retries >= q.maxRetries {

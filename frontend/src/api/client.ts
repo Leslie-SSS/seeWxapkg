@@ -139,6 +139,7 @@ export interface TaskResponse {
   diagnosticsCount: number
   errorCode?: string
   errorMessage?: string
+  errorDetail?: string
 }
 
 interface GithubStarsResponse {

@@ -84,7 +84,7 @@ func (q *InMemoryQueue) handleMemoryJob(ctx context.Context, job memoryJob, hand
 		}
 		job.retries++
 		if job.retries >= q.maxRetries {
-			log.Printf("[Queue] in-memory job failed after %d attempts (%T)", job.retries, err)
+			log.Printf("[Queue] in-memory job failed after %d attempts: %v", job.retries, err)
 			return
 		}
 		timer := time.NewTimer(time.Duration(job.retries) * q.retryBackoff)

@@ -15,7 +15,9 @@ function App() {
   const [beautify, setBeautify] = useState(true)
   const [decompile, setDecompile] = useState(true)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [requiresAppId, setRequiresAppId] = useState(false)
   const errorTitleRef = useRef<HTMLHeadingElement>(null)
+  const selectedFileRef = useRef<File | null>(null)
 
   const {
     isUploading,
@@ -34,6 +36,8 @@ function App() {
     packageProfile,
     stages,
     error,
+    errorCode,
+    errorDetail,
     warning,
     connectionInterrupted,
     isComplete,
@@ -67,8 +71,10 @@ function App() {
   }, [taskId])
 
   const handleReset = () => {
+    selectedFileRef.current = null
     setSelectedFile(null)
     setAppId('')
+    setRequiresAppId(false)
     reset()
   }
 
@@ -78,8 +84,15 @@ function App() {
   }
 
   const handleFileSelect = (file: File | null) => {
+    selectedFileRef.current = file
     setSelectedFile(file)
     if (file) settleViewportAtTop()
+    void sniffEncryptedHeader(file).then((requiresAppId) => {
+      // Ignore stale sniff results when the selection changed while reading.
+      if (selectedFileRef.current === file) {
+        setRequiresAppId(requiresAppId)
+      }
+    })
   }
 
   return (
@@ -169,8 +182,13 @@ function App() {
                           反编译未完成
                         </h2>
                         <p className="mt-1 break-words text-sm leading-6 text-slate-300">
-                          {getRecoveryErrorMessage(error)}
+                          {getRecoveryErrorMessage(error, errorCode)}
                         </p>
+                        {errorDetail && (
+                          <p className="mt-1 break-words text-xs leading-5 text-slate-400">
+                            {errorDetail}
+                          </p>
+                        )}
                         <p className="mt-1 text-sm leading-6 text-red-100/80">
                           {selectedFile
                             ? '文件已保留；如为加密包，请重新确认 AppID 后重试。'
@@ -203,6 +221,7 @@ function App() {
                   setBeautify={setBeautify}
                   decompile={decompile}
                   setDecompile={setDecompile}
+                  requiresAppId={requiresAppId}
                 />
 
                 <ActionDock
@@ -284,14 +303,31 @@ function settleViewportAtTop() {
   })
 }
 
-function getRecoveryErrorMessage(error?: string) {
+function getRecoveryErrorMessage(error?: string, errorCode?: string) {
   if (!error) return '反编译遇到问题，请检查设置后重试。'
 
-  if (/encrypted package requires appid/i.test(error) || /加密包.*AppID/i.test(error)) {
+  if (
+    errorCode === 'app_id_required' ||
+    errorCode === 'app_id_invalid' ||
+    /encrypted package requires appid/i.test(error) ||
+    /加密包.*AppID/i.test(error)
+  ) {
     return '这是加密包，需要填写正确的小程序 AppID。'
   }
 
   return error
+}
+
+// Encrypted wxapkg files carry the literal "V1MMWX" header; sniffing the first
+// bytes client-side lets the AppID hint appear before upload.
+export async function sniffEncryptedHeader(file: File | null): Promise<boolean> {
+  if (!file || typeof file.slice !== 'function') return false
+  try {
+    const bytes = new Uint8Array(await file.slice(0, 6).arrayBuffer())
+    return String.fromCharCode(...bytes) === 'V1MMWX'
+  } catch {
+    return false
+  }
 }
 
 function FileLocationHelp() {

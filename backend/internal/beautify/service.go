@@ -459,7 +459,7 @@ func (s *Service) beautifyWithContext(ctx context.Context, content []byte, fileT
 	}
 
 	if result.Warning != "" {
-		log.Printf("[Beautify] Formatter returned a warning")
+		log.Printf("[Beautify] Formatter warning file=%s type=%s status=%s: %s", filename, fileType, result.Status, result.Warning)
 	}
 
 	return result, nil

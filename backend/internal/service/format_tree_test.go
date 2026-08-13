@@ -24,8 +24,8 @@ func TestFormatSourceTreeFormatsJSONAndReportsUnavailableEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Formatted != 1 || result.Skipped != 1 || !result.Partial {
-		t.Fatalf("unexpected format result: %+v", result)
+	if result.Formatted != 1 || result.Skipped != 1 || result.Partial {
+		t.Fatalf("skipped files preserve original content and must not mark the stage partial: %+v", result)
 	}
 	formatted, err := os.ReadFile(filepath.Join(root, "app.json"))
 	if err != nil {

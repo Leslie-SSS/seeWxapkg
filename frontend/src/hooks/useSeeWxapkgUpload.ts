@@ -27,6 +27,8 @@ interface UploadState {
   packageProfile?: PackageProfile
   stages?: StageResult[]
   error?: string
+  errorCode?: string
+  errorDetail?: string
   warning?: string
   taskId?: string
   isComplete: boolean
@@ -224,6 +226,7 @@ export function useSeeWxapkgUpload() {
           message: event.message,
           status: 'failed',
           error: event.error || event.message || '处理过程中遇到问题，请重试',
+          errorCode: event.errorCode ?? prev.errorCode,
           isComplete: false,
           connectionInterrupted: false,
         }))
@@ -470,6 +473,8 @@ export function applyTaskDetail(prev: UploadState, detail: TaskResponse): Upload
     packageProfile: mergeDetail(prev.packageProfile, detail.profile),
     stages: mergeDetail(prev.stages, detail.stages),
     error: preserveResultState ? prev.error : (detail.errorMessage ?? prev.error),
+    errorCode: preserveResultState ? prev.errorCode : (detail.errorCode ?? prev.errorCode),
+    errorDetail: preserveResultState ? prev.errorDetail : (detail.errorDetail ?? prev.errorDetail),
     isComplete: preserveResultState
       ? prev.isComplete
       : detail.status === 'completed' || detail.status === 'partial',

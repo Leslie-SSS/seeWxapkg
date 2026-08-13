@@ -117,7 +117,10 @@ func FormatSourceTree(root string) (*FormatTreeResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	result.Partial = result.Failed > 0 || result.Skipped > 0
+	// Skipped files keep their original content (formatter unavailable, control
+	// characters, size limits) — that is preservation, not a recovery gap, so
+	// only hard failures mark the formatting stage partial.
+	result.Partial = result.Failed > 0
 	result.Success = result.Failed == 0
 	return result, nil
 }

@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { ConfigPanel } from './ConfigPanel'
 
-function ConfigPanelHarness() {
+function ConfigPanelHarness({ requiresAppId = false }: { requiresAppId?: boolean }) {
   const [appId, setAppId] = useState('')
   const [beautify, setBeautify] = useState(true)
   const [decompile, setDecompile] = useState(true)
@@ -16,11 +16,24 @@ function ConfigPanelHarness() {
       setBeautify={setBeautify}
       decompile={decompile}
       setDecompile={setDecompile}
+      requiresAppId={requiresAppId}
     />
   )
 }
 
 describe('ConfigPanel', () => {
+  it('prompts for the AppID when the selected file is detected as encrypted', () => {
+    render(<ConfigPanelHarness requiresAppId />)
+
+    const notice = screen.getByRole('status')
+    expect(notice).toHaveTextContent('检测到加密包')
+    expect(notice).toHaveTextContent('需要对应的小程序 AppID 才能解密')
+  })
+
+  it('stays quiet about AppID for plain packages', () => {
+    render(<ConfigPanelHarness />)
+    expect(screen.queryByText('检测到加密包')).not.toBeInTheDocument()
+  })
   it('provides full-size touch targets for switches and AppID clearing', () => {
     render(<ConfigPanelHarness />)
 

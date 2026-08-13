@@ -599,6 +599,61 @@ describe('useSeeWxapkgUpload connection state', () => {
     expect(unsubscribe).toHaveBeenCalledOnce()
     expect(sessionStorage.getItem(ACTIVE_TASK_STORAGE_KEY)).toBeNull()
   })
+
+  it('keeps the backend error code from the error event', async () => {
+    let progressListener: ((event: ProgressEvent) => void) | undefined
+    const unsubscribe = vi.fn()
+    vi.spyOn(api, 'compile').mockResolvedValue({ success: true, taskId: TASK_A, message: 'ok' })
+    vi.spyOn(api, 'subscribeProgress').mockImplementation((_taskId, onEvent) => {
+      progressListener = onEvent
+      return unsubscribe
+    })
+
+    const { result } = renderHook(() => useSeeWxapkgUpload())
+    await act(async () => {
+      await result.current.upload(new File(['data'], '__APP__.wxapkg'))
+    })
+
+    act(() => {
+      progressListener?.({
+        type: 'error',
+        taskId: TASK_A,
+        stage: 'failed',
+        status: 'failed',
+        percent: 0,
+        message: '解包失败',
+        error: '解包失败',
+        errorCode: 'unpack_failed',
+      })
+    })
+
+    expect(result.current.status).toBe('failed')
+    expect(result.current.errorCode).toBe('unpack_failed')
+  })
+
+  it('propagates errorCode and errorDetail from the task detail', () => {
+    const next = applyTaskDetail(
+      {
+        isUploading: true,
+        progress: 0,
+        stage: '',
+        message: '',
+        status: 'processing',
+        isComplete: false,
+        connectionInterrupted: false,
+      },
+      {
+        ...taskDetail(TASK_A, 'failed', 0),
+        errorCode: 'unpack_failed',
+        errorMessage: '解包失败',
+        errorDetail: '首标记错误（期望 0xBE，实际 0x00）',
+      }
+    )
+
+    expect(next.status).toBe('failed')
+    expect(next.errorCode).toBe('unpack_failed')
+    expect(next.errorDetail).toContain('首标记错误')
+  })
 })
 
 function taskDetail(id: string, status: TaskResponse['status'], progress: number): TaskResponse {

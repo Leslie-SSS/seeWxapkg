@@ -179,7 +179,7 @@ func (s *CompileService) StartTask(ctx context.Context, cmd StartCompileCommand)
 	} else {
 		go func() {
 			if err := s.RunTask(context.Background(), t.ID); err != nil {
-				log.Printf("[Task] pipeline failed (%T)", err)
+				log.Printf("[Task] pipeline failed: %v", err)
 			}
 		}()
 	}
@@ -193,7 +193,7 @@ func (s *CompileService) RunTask(ctx context.Context, taskID string) (runErr err
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			panicErr := fmt.Errorf("pipeline panic: %v", recovered)
-			log.Print("[Task] recovered pipeline panic")
+			log.Printf("[Task] recovered pipeline panic: %v", recovered)
 			if t == nil {
 				runErr = panicErr
 				return
@@ -337,6 +337,25 @@ func (s *CompileService) RunTask(ctx context.Context, taskID string) (runErr err
 		}
 		if formatResult.Skipped > 0 {
 			formatDiagnostics = append(formatDiagnostics, pkg.Warn("format.files.skipped", fmt.Sprintf("%d 个文件未格式化，已保留原始内容", formatResult.Skipped), "formatting", dirs.SourceDir))
+		}
+		// Surface up to a few per-file warnings so users can locate the files
+		// that kept their original content; the full list stays in
+		// format-report.json. Truncate the warning text to bound state size.
+		const maxWarningSamples = 10
+		warningSamples := 0
+		for _, fileResult := range formatResult.Files {
+			if warningSamples >= maxWarningSamples {
+				break
+			}
+			if fileResult.Warning == "" {
+				continue
+			}
+			warningSamples++
+			warningText := fileResult.Warning
+			if runes := []rune(warningText); len(runes) > 120 {
+				warningText = string(runes[:120])
+			}
+			formatDiagnostics = append(formatDiagnostics, pkg.Warn("format.files.warning", warningText, "formatting", fileResult.Path))
 		}
 		s.finishStage(ctx, t, string(task.TaskFormatting), formatResult.Success, formatResult.Partial, "最终格式化阶段完成", map[string]interface{}{
 			"engine":    "safe-format",
@@ -809,12 +828,33 @@ func applyTerminalState(t *task.Task, status task.TaskStatus, code, msg string, 
 	}
 	if status == task.TaskFailed {
 		// Persist only the user-safe message. The raw cause may contain host paths,
-		// process output or package-derived text and remains in-memory only.
+		// process output or package-derived text; the sanitized cause below is what
+		// survives for diagnosis, while the raw error stays in-memory only.
 		errorMessage := msg
 		t.ErrorMessage = &errorMessage
+		t.FailureCause = sanitizedFailureCause(cause)
 	} else {
 		t.ErrorMessage = nil
+		t.FailureCause = nil
 	}
+}
+
+// sanitizedFailureCause converts a raw error into a persisted-safe cause string:
+// host paths and other internal details are stripped, and the result is truncated
+// to bound state file size.
+func sanitizedFailureCause(cause error) *string {
+	if cause == nil {
+		return nil
+	}
+	sanitized := report.SanitizeText(cause.Error())
+	const maxCauseRunes = 500
+	if runes := []rune(sanitized); len(runes) > maxCauseRunes {
+		sanitized = string(runes[:maxCauseRunes])
+	}
+	if sanitized == "" {
+		return nil
+	}
+	return &sanitized
 }
 
 func resetTaskForRetry(t *task.Task) {
@@ -826,6 +866,7 @@ func resetTaskForRetry(t *task.Task) {
 	t.Diagnostics = nil
 	t.ErrorCode = nil
 	t.ErrorMessage = nil
+	t.FailureCause = nil
 	t.Progress = 0
 	t.CurrentStage = "queued"
 	t.CurrentMessage = "正在从安全检查点重新处理"
@@ -1107,7 +1148,15 @@ func determineFinalStatus(decompileRequested bool, manifest *verify.ManifestVeri
 		return task.TaskFailed, "artifact_critical", "恢复结果存在关键产物缺失或解析失败"
 	}
 	artifactQualityFailed := artifacts != nil && artifacts.WXMLQualityIssueFiles > 0
-	if !manifest.Success || decompilePartial || artifactQualityFailed || (decompileRequested && (artifacts == nil || !artifacts.Success)) {
+	if !manifest.Success || decompilePartial || artifactQualityFailed || artifacts == nil || !artifacts.Success {
+		// Verify grades the merged tree independently of the decompile toggle:
+		// a package whose pages lack any parseable WXML must never be reported
+		// as completed, and the message should say exactly what is missing.
+		if artifacts != nil && artifacts.TotalPages > 0 && artifacts.WXMLFiles == 0 {
+			// The generic partial branch appends "详见 recovery-report.json" at
+			// the call site; keep the specific message free of the suffix.
+			return task.TaskPartial, "", "WXML 模板未还原（0 个可解析 WXML 文件）"
+		}
 		return task.TaskPartial, "", "部分内容需检查"
 	}
 	return task.TaskCompleted, "", "恢复结果通过核心校验"

@@ -50,6 +50,7 @@ type TaskResponseDTO struct {
 	DiagnosticsCount int                   `json:"diagnosticsCount"`
 	ErrorCode        *string               `json:"errorCode,omitempty"`
 	ErrorMessage     *string               `json:"errorMessage,omitempty"`
+	ErrorDetail      *string               `json:"errorDetail,omitempty"`
 }
 
 func ToTaskResponseDTO(t *task.Task) TaskResponseDTO {
@@ -87,6 +88,15 @@ func ToTaskResponseDTO(t *task.Task) TaskResponseDTO {
 		errorMessage = &safeMessage
 	}
 
+	// The persisted failure cause is already sanitized and truncated at write
+	// time; re-sanitize defensively so a cause can never leak host paths to the
+	// public DTO even if the persistence invariant regresses.
+	var errorDetail *string
+	if t.FailureCause != nil {
+		safeDetail := report.SanitizeText(*t.FailureCause)
+		errorDetail = &safeDetail
+	}
+
 	return TaskResponseDTO{
 		ID:               t.ID,
 		Status:           string(t.Status),
@@ -101,6 +111,7 @@ func ToTaskResponseDTO(t *task.Task) TaskResponseDTO {
 		DiagnosticsCount: len(t.Diagnostics),
 		ErrorCode:        t.ErrorCode,
 		ErrorMessage:     errorMessage,
+		ErrorDetail:      errorDetail,
 	}
 }
 

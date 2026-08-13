@@ -76,8 +76,12 @@ func readFallbackStatus(outputDir string) (string, []pkg.Diagnostic) {
 	data, err := os.ReadFile(statusPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "partial", []pkg.Diagnostic{
-				pkg.Warn("recover.fallback.status_missing", "fallback 未提供静态恢复状态，已按 partial 处理", "fallback_recovering", statusPath),
+			// The status file is a bookkeeping nicety that wuWxapkg.js does not
+			// currently write. Absence is not evidence of an incomplete recovery:
+			// the recovered files themselves and the independent verify stage
+			// decide the outcome, so do not force partial on missing status.
+			return "completed", []pkg.Diagnostic{
+				pkg.Warn("recover.fallback.status_missing", "fallback 未提供静态恢复状态，以实际产物与验证结果为准", "fallback_recovering", statusPath),
 			}
 		}
 		return "partial", []pkg.Diagnostic{
