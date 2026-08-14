@@ -830,7 +830,15 @@ function doFrame(name, cb, order, mainDir) {
                 : (nnmIdx !== -1 ? nnmIdx + json.length + 1 : -1);
             let endOfRequire = -1;
             if (searchFrom !== -1) {
-                endOfRequire = code.search(/\(\)(?:\r?\n)/, searchFrom);
+                // String.prototype.search ignores a fromIndex argument; use
+                // indexOf so the search really starts after the nnm map.
+                const crlf = code.indexOf('()\r\n', searchFrom);
+                const lf = code.indexOf('()\n', searchFrom);
+                if (crlf !== -1 && (lf === -1 || crlf < lf)) {
+                    endOfRequire = crlf;
+                } else {
+                    endOfRequire = lf;
+                }
             }
             if (endOfRequire !== -1) {
                 const newline = code.indexOf('\n', endOfRequire);

@@ -381,7 +381,7 @@ func (s *CompileService) RunTask(ctx context.Context, taskID string) (runErr err
 
 	t.ArtifactSummary = s.buildArtifactSummary(t, dirs, reportPath, diagnosticsPath, artifactFiles)
 	finalFileCount := t.ArtifactSummary.FileCount
-	status, code, message := determineFinalStatus(t.RequestedOptions.Decompile, manifestVerifyResult, artifactVerifyResult, decompilePartial)
+	status, code, message := determineFinalStatus(manifestVerifyResult, artifactVerifyResult, decompilePartial)
 	switch status {
 	case task.TaskPartial:
 		message = fmt.Sprintf("已整理 %d 个源码文件；%s，详见 recovery-report.json", finalFileCount, message)
@@ -1140,7 +1140,7 @@ func metricIntMap(metrics map[string]interface{}, key string) map[string]int {
 	}
 }
 
-func determineFinalStatus(decompileRequested bool, manifest *verify.ManifestVerifyResult, artifacts *verify.ArtifactVerifyResult, decompilePartial bool) (task.TaskStatus, string, string) {
+func determineFinalStatus(manifest *verify.ManifestVerifyResult, artifacts *verify.ArtifactVerifyResult, decompilePartial bool) (task.TaskStatus, string, string) {
 	if manifest == nil || manifest.PageCount == 0 {
 		return task.TaskFailed, "manifest_incomplete", "manifest 恢复结果未通过核心校验"
 	}

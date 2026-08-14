@@ -19,7 +19,7 @@ import (
 
 func TestDetermineFinalStatusCompleted(t *testing.T) {
 	status, code, _ := determineFinalStatus(
-		true,
+
 		&verify.ManifestVerifyResult{Success: true, PageCount: 1},
 		&verify.ArtifactVerifyResult{Success: true, VerifierPassed: true, TotalPages: 1, PageTriplets: 1},
 		false,
@@ -31,7 +31,7 @@ func TestDetermineFinalStatusCompleted(t *testing.T) {
 
 func TestDetermineFinalStatusPartialWhenDecompileHasGap(t *testing.T) {
 	status, _, _ := determineFinalStatus(
-		true,
+
 		&verify.ManifestVerifyResult{Success: true, PageCount: 1},
 		&verify.ArtifactVerifyResult{Success: true, VerifierPassed: true, TotalPages: 1, PageTriplets: 1},
 		true,
@@ -43,7 +43,7 @@ func TestDetermineFinalStatusPartialWhenDecompileHasGap(t *testing.T) {
 
 func TestDetermineFinalStatusFailedOnCriticalArtifacts(t *testing.T) {
 	status, code, _ := determineFinalStatus(
-		true,
+
 		&verify.ManifestVerifyResult{Success: true, PageCount: 1},
 		&verify.ArtifactVerifyResult{Success: false, CriticalFailure: true},
 		false,
@@ -55,7 +55,7 @@ func TestDetermineFinalStatusFailedOnCriticalArtifacts(t *testing.T) {
 
 func TestDetermineFinalStatusPartialWhenManifestHasMissingPageArtifacts(t *testing.T) {
 	status, code, _ := determineFinalStatus(
-		true,
+
 		&verify.ManifestVerifyResult{Success: false, PageCount: 2, MissingPages: []string{"pages/missing"}},
 		&verify.ArtifactVerifyResult{Success: false, TotalPages: 2},
 		true,
@@ -67,7 +67,7 @@ func TestDetermineFinalStatusPartialWhenManifestHasMissingPageArtifacts(t *testi
 
 func TestDetermineFinalStatusPartialOnWXMLQualityFailureWithoutDeepRecovery(t *testing.T) {
 	status, code, message := determineFinalStatus(
-		false,
+
 		&verify.ManifestVerifyResult{Success: true, PageCount: 1},
 		&verify.ArtifactVerifyResult{Success: false, WXMLQualityPassed: false, WXMLQualityIssueFiles: 1, TotalPages: 1, WXMLFiles: 5},
 		false,
@@ -85,7 +85,7 @@ func TestDetermineFinalStatusPartialWhenShallowExtractionFailsVerification(t *te
 	// toggle: a tree that fails verification (e.g. wxml=0) must not be
 	// reported as completed just because deep recovery was not requested.
 	status, code, message := determineFinalStatus(
-		false,
+
 		&verify.ManifestVerifyResult{Success: true, PageCount: 1},
 		&verify.ArtifactVerifyResult{Success: false, WXMLQualityPassed: true, TotalPages: 1, WXMLFiles: 1},
 		false,
@@ -100,7 +100,7 @@ func TestDetermineFinalStatusPartialWhenShallowExtractionFailsVerification(t *te
 
 func TestDetermineFinalStatusExplicitMessageWhenWXMLMissing(t *testing.T) {
 	status, _, message := determineFinalStatus(
-		true,
+
 		&verify.ManifestVerifyResult{Success: true, PageCount: 3},
 		&verify.ArtifactVerifyResult{Success: false, TotalPages: 3, WXMLFiles: 0},
 		false,
@@ -115,7 +115,7 @@ func TestDetermineFinalStatusExplicitMessageWhenWXMLMissing(t *testing.T) {
 
 func TestDetermineFinalStatusFailsWhenNoManifestPagesRecovered(t *testing.T) {
 	status, code, _ := determineFinalStatus(
-		true,
+
 		&verify.ManifestVerifyResult{Success: false, PageCount: 0},
 		&verify.ArtifactVerifyResult{},
 		true,

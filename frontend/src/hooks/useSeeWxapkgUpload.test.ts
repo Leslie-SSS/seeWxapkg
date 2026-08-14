@@ -160,6 +160,36 @@ describe('useSeeWxapkgUpload helpers', () => {
     expect(next.warning).toBe('详情暂时不可用')
     expect(next.connectionInterrupted).toBe(false)
   })
+
+  it('clears a stale failure message when a terminal success arrives', () => {
+    const next = applyTerminalEvent(
+      {
+        isUploading: true,
+        progress: 90,
+        stage: 'packaging',
+        message: '打包中',
+        status: 'processing',
+        error: '之前的错误',
+        errorCode: 'unpack_failed',
+        errorDetail: '旧根因',
+        isComplete: false,
+        connectionInterrupted: false,
+      },
+      {
+        type: 'complete',
+        stage: 'completed',
+        status: 'completed',
+        percent: 100,
+        message: '完成',
+        taskId: 'task-1',
+      }
+    )
+
+    expect(next.status).toBe('completed')
+    expect(next.error).toBeUndefined()
+    expect(next.errorCode).toBeUndefined()
+    expect(next.errorDetail).toBeUndefined()
+  })
 })
 
 describe('active task recovery record', () => {

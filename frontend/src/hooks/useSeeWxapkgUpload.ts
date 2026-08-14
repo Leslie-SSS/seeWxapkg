@@ -441,6 +441,11 @@ export function applyTerminalEvent(
     diagnosticsUrl: event.diagnosticsUrl ?? prev.diagnosticsUrl,
     diagnosticsCount: event.diagnosticsCount ?? prev.diagnosticsCount,
     warning: detailError ?? prev.warning,
+    // A terminal success must never leave a stale failure message visible,
+    // even if an earlier event in the stream reported an error.
+    error: undefined,
+    errorCode: undefined,
+    errorDetail: undefined,
     connectionInterrupted: false,
   }
 }

@@ -103,6 +103,34 @@ test('non-assignment expression statements between registry entries are tolerate
     assert.ok(registries.e_['pages/index/index.wxml'].f, 'registry must survive interleaved calls');
 });
 
+test('the IIFE cut searches only after the nnm map', () => {
+    // The nnm require-map value contains a `()\n` inside a function literal;
+    // the IIFE invocation search must start after the map, never inside it.
+    const code = [
+        'var nv_require=function(){var nnm={"p_utils/msg.wxs":function(){return f()\n}};var path="";return function(p){return nnm[p]}}()',
+        'var d_={};',
+        'd_["pages/index/index.wxml"]={};',
+        'var e_={};',
+        'e_["pages/index/index.wxml"]={f:function(e,t,n){var a=_v();var c=_o(1);_(a,c);return a;}};',
+        'if(path&&e_[path]){e_[path].call(null)}'
+    ].join('\n');
+    const before = '\nvar nv_require=function(){var nnm=';
+    const beforeIdx = code.lastIndexOf(before);
+    let sliced = code.slice(beforeIdx + before.length);
+    const pathIdx = sliced.lastIndexOf('if(path&&e_[path]){');
+    if (pathIdx !== -1) sliced = sliced.slice(0, pathIdx);
+    const jsonEnd = sliced.indexOf('};');
+    const searchFrom = jsonEnd + 2;
+    const crlf = sliced.indexOf('()\r\n', searchFrom);
+    const lf = sliced.indexOf('()\n', searchFrom);
+    const endOfRequire = crlf !== -1 && (lf === -1 || crlf < lf) ? crlf : lf;
+    // The only `()\n` after the map is the nv_require IIFE invocation.
+    assert.notEqual(endOfRequire, -1);
+    assert.ok(endOfRequire > searchFrom, 'search must skip the map-internal ()');
+    const {registries} = extractWxmlRegistries(sliced.slice(sliced.indexOf('\n', endOfRequire) + 1), null);
+    assert.ok(registries.e_['pages/index/index.wxml'].f, 'registry must survive the guarded cut');
+});
+
 test('stripLeadingBraceStatement tolerates strings and comments', () => {
     const code = '{"a": "};", "b": 1 /* } */};\nvar d_={"x":"x.wxml"};';
     const stripped = stripLeadingBraceStatement(code);
