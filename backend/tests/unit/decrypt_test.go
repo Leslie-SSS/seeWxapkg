@@ -72,7 +72,7 @@ func TestDecryptWxapkgRoundTrip(t *testing.T) {
 	// CBC head and the XOR tail are exercised.
 	payload := strings.Repeat("0123456789abcdef", 160) // 2560 bytes
 	plain := testutil.MustBuildWxapkg(map[string]string{
-		"app.json": `{"pages":["pages/home/index"]}`,
+		"app.json":            `{"pages":["pages/home/index"]}`,
 		"pages/home/index.js": "Page({data:{big:\"" + payload + "\"}});\n",
 	})
 	if len(plain) <= 1024 {
