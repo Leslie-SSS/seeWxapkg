@@ -242,8 +242,14 @@ function extractWxmlRegistries(code, initialEnv) {
             }
             continue;
         }
-        if (statement.type !== 'ExpressionStatement' || statement.expression.type !== 'AssignmentExpression') {
+        if (statement.type !== 'ExpressionStatement') {
             throw new Error(`Unsupported WXML registry statement: ${statement.type}`);
+        }
+        if (statement.expression.type !== 'AssignmentExpression') {
+            // Real 4.x bundles interleave non-assignment expression statements
+            // (e.g. renderer bootstrap calls) with the registry assignments.
+            // They carry no registry data and must not fail the extraction.
+            continue;
         }
         const node = statement.expression;
         if (node.operator !== '=') throw new Error(`Unsupported WXML registry assignment: ${node.operator}`);

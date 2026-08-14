@@ -88,6 +88,21 @@ test('a dynamic entry in an object-literal registry initializer does not fail ex
     assert.ok(registries.e_['pages/index/index.wxml'].f, 'static entry must survive a dynamic sibling');
 });
 
+test('non-assignment expression statements between registry entries are tolerated', () => {
+    // Real 4.x bundles interleave calls (e.g. renderer bootstrap) with the
+    // d_/e_/f_ assignments; the walk must skip them, not fail the extraction.
+    const code = [
+        'var d_={};',
+        'd_["pages/index/index.wxml"]={};',
+        'bootstrapCall();',
+        'var e_={};',
+        'e_["pages/index/index.wxml"]={f:function(e,t,n){var a=_v();return a;}};',
+        'register(e_, "pages/index/index.wxml");'
+    ].join('\n');
+    const {registries} = extractWxmlRegistries(code);
+    assert.ok(registries.e_['pages/index/index.wxml'].f, 'registry must survive interleaved calls');
+});
+
 test('stripLeadingBraceStatement tolerates strings and comments', () => {
     const code = '{"a": "};", "b": 1 /* } */};\nvar d_={"x":"x.wxml"};';
     const stripped = stripLeadingBraceStatement(code);
