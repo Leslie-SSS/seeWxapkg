@@ -73,7 +73,7 @@ func run() error {
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
 	persistence.StartRetentionJanitor(workerCtx, repo, cfg.RetainArtifactsHours)
-	storage.StartRetentionJanitor(workerCtx, cfg.TempDir, cfg.OutputDir, cfg.RetainArtifactsHours)
+	storage.StartRetentionJanitorWithSamples(workerCtx, cfg.TempDir, cfg.OutputDir, cfg.DiagnosticSamplesDir, cfg.RetainArtifactsHours)
 	if cfg.QueueDriver == "inmem" {
 		jobQueue.StartWorkers(workerCtx, cfg.MaxConcurrentTasks, func(ctx context.Context, taskID string) error {
 			return compileService.RunTask(ctx, taskID)

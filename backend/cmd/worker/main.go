@@ -46,7 +46,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	persistence.StartRetentionJanitor(ctx, repo, cfg.RetainArtifactsHours)
-	storage.StartRetentionJanitor(ctx, cfg.TempDir, cfg.OutputDir, cfg.RetainArtifactsHours)
+	storage.StartRetentionJanitorWithSamples(ctx, cfg.TempDir, cfg.OutputDir, cfg.DiagnosticSamplesDir, cfg.RetainArtifactsHours)
 	jobQueue.StartWorkers(ctx, cfg.MaxConcurrentTasks, func(workerCtx context.Context, taskID string) error {
 		return compileService.RunTask(workerCtx, taskID)
 	})

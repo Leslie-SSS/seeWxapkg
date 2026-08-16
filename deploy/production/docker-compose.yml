@@ -38,10 +38,13 @@ services:
       NODE_EXEC_TIMEOUT_SECONDS: 120
       NODE_EXEC_MEMORY_MB: 512
       RETAIN_ARTIFACTS_HOURS: 72
+      # Failed/partial inputs are retained temporarily for offline analysis.
+      DIAGNOSTIC_SAMPLES_DIR: /data/samples
       TZ: Asia/Shanghai
     volumes:
       - backend-tasks:/data/tasks
       - backend-output:/data/output
+      - backend-samples:/data/samples
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=1000,gid=1000
     networks:
@@ -93,10 +96,13 @@ services:
       NODE_EXEC_MEMORY_MB: 512
       # The API owns retention cleanup for the shared volumes.
       RETAIN_ARTIFACTS_HOURS: 0
+      # Failed/partial inputs are retained temporarily for offline analysis.
+      DIAGNOSTIC_SAMPLES_DIR: /data/samples
       TZ: Asia/Shanghai
     volumes:
       - backend-tasks:/data/tasks
       - backend-output:/data/output
+      - backend-samples:/data/samples
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=0700,uid=1000,gid=1000
     network_mode: none
@@ -150,6 +156,7 @@ services:
 volumes:
   backend-tasks:
   backend-output:
+  backend-samples:
 
 networks:
   seewxapkg-network:

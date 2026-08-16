@@ -270,6 +270,13 @@ func (s *CompileService) RunTask(ctx context.Context, taskID string) (runErr err
 		return s.markFailed(ctx, t, "app_id_read_failed", "读取解密凭据失败", err)
 	}
 	decryptedData, decryptErr := s.decrypt(ctx, t, data, appID)
+	// With sample collection enabled, keep the package (decrypted bytes when
+	// available) and the one-shot AppID for offline analysis before the
+	// credential is destroyed. Best-effort: a storage failure must not change
+	// task outcomes.
+	if sampleErr := s.saveDiagnosticSample(t, dirs, data, decryptedData, appID); sampleErr != nil {
+		log.Printf("[Task] save diagnostic sample failed (%T)", sampleErr)
+	}
 	deleteSecretErr := storage.DeleteAppIDSecret(dirs)
 	if deleteSecretErr != nil {
 		return s.markFailed(ctx, t, "app_id_cleanup_failed", "清理解密凭据失败，任务已安全终止", deleteSecretErr)
@@ -737,6 +744,34 @@ func (s *CompileService) markFailed(ctx context.Context, t *task.Task, code, msg
 	return s.finalizeTask(ctx, t, task.TaskFailed, code, msg, cause)
 }
 
+// saveDiagnosticSample retains the package (decrypted bytes when available)
+// and the one-shot AppID for offline analysis. Only invoked before the
+// credential is destroyed; successful tasks delete their sample at finalize.
+func (s *CompileService) saveDiagnosticSample(t *task.Task, dirs storage.TaskDirs, original, decrypted []byte, appID string) error {
+	if s.cfg.DiagnosticSamplesDir == "" {
+		return nil
+	}
+	data := original
+	if decrypted != nil {
+		data = decrypted
+	}
+	if err := storage.SaveDiagnosticSample(s.cfg.DiagnosticSamplesDir, t.ID, data, appID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// discardDiagnosticSample removes a collected sample for a task that ended up
+// completing: only failed/partial inputs are worth keeping for analysis.
+func (s *CompileService) discardDiagnosticSample(t *task.Task) {
+	if s.cfg.DiagnosticSamplesDir == "" {
+		return
+	}
+	if err := os.RemoveAll(filepath.Join(s.cfg.DiagnosticSamplesDir, t.ID)); err != nil {
+		log.Printf("[Task] discard diagnostic sample failed (%T)", err)
+	}
+}
+
 func (s *CompileService) finalizeTask(ctx context.Context, t *task.Task, status task.TaskStatus, code, msg string, cause error) error {
 	msg = report.SanitizeText(msg)
 	now := time.Now()
@@ -751,6 +786,10 @@ func (s *CompileService) finalizeTask(ctx context.Context, t *task.Task, status 
 		cause = errors.Join(cause, dirsErr)
 	}
 	applyTerminalState(t, status, code, msg, cause, now)
+	if status == task.TaskCompleted {
+		// Sample collection is for failed/partial inputs only.
+		s.discardDiagnosticSample(t)
+	}
 	if err := s.syncTaskReports(t); err != nil {
 		return err
 	}

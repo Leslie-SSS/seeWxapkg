@@ -432,3 +432,58 @@ func TestRetentionCleanupPreservesStateDirectoryAndExpiresOldRecords(t *testing.
 		t.Fatalf("active pending job was removed: %v", err)
 	}
 }
+
+func TestSaveDiagnosticSampleWritesPrivateFiles(t *testing.T) {
+	root := t.TempDir()
+	samplesDir := filepath.Join(root, "samples")
+	if err := SaveDiagnosticSample(samplesDir, "task-1", []byte("decrypted-bytes"), "wx0123456789abcdef"); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := os.ReadFile(filepath.Join(samplesDir, "task-1", "input.wxapkg"))
+	if err != nil || string(pkg) != "decrypted-bytes" {
+		t.Fatalf("sample package not written: %v %q", err, pkg)
+	}
+	appid, err := os.ReadFile(filepath.Join(samplesDir, "task-1", "appid.txt"))
+	if err != nil || string(appid) != "wx0123456789abcdef" {
+		t.Fatalf("sample appid not written: %v %q", err, appid)
+	}
+	for _, p := range []string{filepath.Join(samplesDir, "task-1", "input.wxapkg"), filepath.Join(samplesDir, "task-1", "appid.txt")} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("sample file not private: %v", info.Mode())
+		}
+	}
+}
+
+func TestSaveDiagnosticSampleDisabledWhenDirEmpty(t *testing.T) {
+	if err := SaveDiagnosticSample("", "task-1", []byte("x"), ""); err != nil {
+		t.Fatalf("empty samples dir must be a no-op: %v", err)
+	}
+}
+
+func TestCleanupDiagnosticSamplesRemovesExpiredOnly(t *testing.T) {
+	root := t.TempDir()
+	samplesDir := filepath.Join(root, "samples")
+	old := filepath.Join(samplesDir, "old-task")
+	fresh := filepath.Join(samplesDir, "fresh-task")
+	if err := os.MkdirAll(old, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(fresh, 0700); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(old, past, past); err != nil {
+		t.Fatal(err)
+	}
+	CleanupDiagnosticSamples(samplesDir, 24*time.Hour)
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("expired sample not removed: %v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("fresh sample removed: %v", err)
+	}
+}

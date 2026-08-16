@@ -38,7 +38,14 @@ type Config struct {
 
 	MaxConcurrentTasks   int
 	RetainArtifactsHours int
-	storageInitErr       error
+
+	// DiagnosticSamplesDir, when non-empty, enables temporary retention of
+	// failed/partial task inputs (package + AppID) for offline analysis.
+	// Samples follow the same retention window as artifacts and are never
+	// exposed through the API. Empty by default (collection disabled).
+	DiagnosticSamplesDir string
+
+	storageInitErr error
 }
 
 func Load() *Config {
@@ -71,6 +78,7 @@ func Load() *Config {
 
 		MaxConcurrentTasks:   getEnvInt("MAX_CONCURRENT_TASKS", 4),
 		RetainArtifactsHours: getEnvInt("RETAIN_ARTIFACTS_HOURS", 24),
+		DiagnosticSamplesDir: getEnv("DIAGNOSTIC_SAMPLES_DIR", ""),
 	}
 
 	// These directories contain uploaded packages and recovered source. Tighten
@@ -78,7 +86,10 @@ func Load() *Config {
 	for _, directory := range []struct {
 		label string
 		path  string
-	}{{"TEMP_DIR", cfg.TempDir}, {"OUTPUT_DIR", cfg.OutputDir}} {
+	}{{"TEMP_DIR", cfg.TempDir}, {"OUTPUT_DIR", cfg.OutputDir}, {"DIAGNOSTIC_SAMPLES_DIR", cfg.DiagnosticSamplesDir}} {
+		if directory.path == "" {
+			continue
+		}
 		if err := validatePrivateStoragePath(directory.label, directory.path); err != nil {
 			cfg.storageInitErr = err
 			break

@@ -67,6 +67,9 @@ export function HomeHero({ children }: HomeHeroProps) {
             文件定时清理
           </li>
         </ul>
+        <p className="hero-reveal hero-reveal-delay-3 mt-3 text-center text-xs leading-5 text-slate-500">
+          仅当任务失败时，输入样本可能被临时保留用于改进服务（72 小时内自动删除）；成功任务不保留任何样本。
+        </p>
       </section>
 
       <section

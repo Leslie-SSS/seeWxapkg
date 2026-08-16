@@ -114,6 +114,62 @@ func DeleteTaskInput(dirs TaskDirs) error {
 	return syncDirectory(dirs.RootDir)
 }
 
+// SaveDiagnosticSample retains a failed/partial task's package (preferring the
+// decrypted bytes, which carry the most analysis value) together with the
+// one-shot AppID in a private per-task directory. Samples are never exposed
+// through the API and are removed by the retention janitor like other
+// artifacts. bestEffort=true means failures are logged, never fatal.
+func SaveDiagnosticSample(samplesDir string, taskID string, data []byte, appID string) error {
+	if samplesDir == "" || taskID == "" || len(data) == 0 {
+		return nil
+	}
+	dir := filepath.Join(samplesDir, taskID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return err
+	}
+	if err := writePrivateFileAtomic(filepath.Join(dir, "input.wxapkg"), func(file *os.File) error {
+		_, err := file.Write(data)
+		return err
+	}); err != nil {
+		return err
+	}
+	if appID != "" {
+		if err := writePrivateFileAtomic(filepath.Join(dir, "appid.txt"), func(file *os.File) error {
+			_, err := file.Write([]byte(appID))
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	return syncDirectory(dir)
+}
+
+// CleanupDiagnosticSamples removes per-task sample directories older than the
+// cutoff. The janitor calls this alongside artifact cleanup; the samples dir is
+// a separate root so a failure there never disturbs artifact retention.
+func CleanupDiagnosticSamples(samplesDir string, cutoff time.Duration) {
+	if samplesDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(samplesDir)
+	if err != nil {
+		return
+	}
+	deadline := time.Now().Add(-cutoff)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(deadline) {
+			_ = os.RemoveAll(filepath.Join(samplesDir, entry.Name()))
+		}
+	}
+}
+
 func SaveUploadedFile(dirs TaskDirs, file *multipart.FileHeader) (string, error) {
 	src, err := file.Open()
 	if err != nil {
@@ -368,6 +424,12 @@ func zipDir(src, dst, archivePrefix string) (entries []string, retErr error) {
 }
 
 func StartRetentionJanitor(ctx context.Context, tempDir, outputDir string, retainHours int) {
+	StartRetentionJanitorWithSamples(ctx, tempDir, outputDir, "", retainHours)
+}
+
+// StartRetentionJanitorWithSamples also sweeps the diagnostic samples dir when
+// sample collection is enabled.
+func StartRetentionJanitorWithSamples(ctx context.Context, tempDir, outputDir, samplesDir string, retainHours int) {
 	if retainHours <= 0 {
 		return
 	}
@@ -376,10 +438,12 @@ func StartRetentionJanitor(ctx context.Context, tempDir, outputDir string, retai
 		defer ticker.Stop()
 		cutoff := time.Duration(retainHours) * time.Hour
 		cleanupRetentionRoots(tempDir, outputDir, cutoff)
+		CleanupDiagnosticSamples(samplesDir, cutoff)
 		for {
 			select {
 			case <-ticker.C:
 				cleanupRetentionRoots(tempDir, outputDir, cutoff)
+				CleanupDiagnosticSamples(samplesDir, cutoff)
 			case <-ctx.Done():
 				return
 			}
