@@ -52,7 +52,7 @@ COPY --chown=node:node internal/beautify/wxappUnpacker/LICENSE internal/beautify
 
 # 安装时区数据，使生产环境的 TZ 配置同时作用于 Go 与 Node 日志。
 RUN apk add --no-cache tzdata && \
-    mkdir -p /tmp/seewxapkg /output /data/tasks /data/output && \
+    mkdir -p /tmp/seewxapkg /output /data/tasks /data/output /data/samples && \
     chown -R node:node /app /tmp/seewxapkg /output /data
 
 # 环境变量
