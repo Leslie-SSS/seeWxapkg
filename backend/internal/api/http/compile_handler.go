@@ -96,12 +96,19 @@ func (h *CompileHandler) Compile(c *gin.Context) {
 
 func parseCompileRequest(c *gin.Context) (CompileRequestDTO, *multipart.FileHeader, error) {
 	dto := CompileRequestDTO{
-		AppID:     c.PostForm("appId"),
-		Beautify:  c.PostForm("beautify") == "true",
-		Decompile: c.PostForm("decompile") == "true",
+		AppID:           c.PostForm("appId"),
+		Beautify:        c.PostForm("beautify") == "true",
+		Decompile:       c.PostForm("decompile") == "true",
+		RemoveGuideHTML: removeGuideHTML(c.PostForm("removeGuideHtml")),
 	}
 	file, err := c.FormFile("file")
 	return dto, file, err
+}
+
+// removeGuideHTML defaults to true so the 4.x runtime-guide `.html` scaffolds
+// are dropped unless the client explicitly sends "false".
+func removeGuideHTML(raw string) bool {
+	return raw != "false"
 }
 
 func validateCompileRequest(dto CompileRequestDTO, file *multipart.FileHeader, maxUploadBytes int64) error {

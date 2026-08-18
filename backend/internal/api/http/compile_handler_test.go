@@ -174,3 +174,15 @@ func assertGenericServerFailure(t *testing.T, body, messageField, expectedMessag
 		}
 	}
 }
+
+func TestRemoveGuideHTMLDefaultsOn(t *testing.T) {
+	if !removeGuideHTML("") {
+		t.Fatal("omitted field must default to removing guide html")
+	}
+	if !removeGuideHTML("true") {
+		t.Fatal("explicit true must remove guide html")
+	}
+	if removeGuideHTML("false") {
+		t.Fatal("explicit false must keep guide html")
+	}
+}
