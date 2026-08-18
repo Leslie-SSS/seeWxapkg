@@ -39,7 +39,15 @@ function parseJS(file) {
 
 function parseWXSS(file) {
   const content = fs.readFileSync(file, 'utf8');
-  csstree.parse(content, {
+  // WeChat 4.x injects runtime style directives (`wxcs_style_*`,
+  // `wxcs_originclass: .selector`, `;wxcs_fileinfo: ...`) into the recovered
+  // stylesheets. They are metadata consumed by the mini-program runtime, not
+  // CSS syntax, so strip the directive declarations before parsing; otherwise
+  // every 4.x stylesheet fails the parser and the whole task is marked
+  // critically broken. The leading `;?` handles both `wxcs_x: v;` and the
+  // `;wxcs_x: v;` shapes the compiler emits.
+  const sanitized = content.replace(/;?\s*wxcs_[a-z_]+:[^;\n]*;/g, ';');
+  csstree.parse(sanitized, {
     positions: false,
     parseValue: true,
     parseRulePrelude: true,
@@ -254,4 +262,8 @@ function main() {
   process.stdout.write(JSON.stringify(result));
 }
 
-main();
+if (require.main === module) {
+    main();
+} else {
+    module.exports = {parseWXSS};
+}
