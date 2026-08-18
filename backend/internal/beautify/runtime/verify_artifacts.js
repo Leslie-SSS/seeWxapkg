@@ -21,7 +21,27 @@ function toRel(root, file) {
   return path.relative(root, file).split(path.sep).join('/');
 }
 
+// Large bundles (multi-MB watermarks, plugin packages) can exhaust the worker's
+// node --max-old-space-size when every file is fully parsed. Beyond the limit a
+// file is treated as recovered-but-not-re-parsed (count as parseable, surface a
+// diagnostic) so legitimate large packages are not marked critically broken.
+const SKIP_PARSE_BYTES = 2 * 1024 * 1024;
+const skippedParses = [];
+
+function shouldSkipParse(file) {
+  try {
+    if (fs.statSync(file).size > SKIP_PARSE_BYTES) {
+      skippedParses.push(toRel(process.argv[2] || '.', file));
+      return true;
+    }
+  } catch (error) {
+    // Fall through to the normal read/parse path.
+  }
+  return false;
+}
+
 function parseJS(file) {
+  if (shouldSkipParse(file)) return;
   const content = fs.readFileSync(file, 'utf8');
   parser.parse(content, {
     sourceType: 'unambiguous',
@@ -38,6 +58,7 @@ function parseJS(file) {
 }
 
 function parseWXSS(file) {
+  if (shouldSkipParse(file)) return;
   const content = fs.readFileSync(file, 'utf8');
   // WeChat 4.x injects runtime style directives (`wxcs_style_*`,
   // `wxcs_originclass: .selector`, `;wxcs_fileinfo: ...`) into the recovered
@@ -178,6 +199,7 @@ function resolveWxmlRef(file, root, ref) {
 }
 
 function parseWXML(file, root) {
+  if (shouldSkipParse(file)) return [];
   const content = fs.readFileSync(file, 'utf8');
   validateWXMLStructure(content);
   // parse5 remains useful as a tolerant tokenization smoke-test, while the
@@ -216,6 +238,7 @@ function main() {
     wxssFiles: 0,
     wxssParseable: 0,
     wxssErrors: [],
+    skippedParses: [],
   };
 
   for (const file of walk(root)) {
@@ -253,12 +276,13 @@ function main() {
         result.wxmlErrors.push(payload);
         continue;
       }
-      if (ext === '.wxss' || ext === '.css') {
-        result.wxssErrors.push(payload);
-      }
-    }
-  }
+	      if (ext === '.wxss' || ext === '.css') {
+	        result.wxssErrors.push(payload);
+	      }
+	    }
+	  }
 
+  result.skippedParses = skippedParses;
   process.stdout.write(JSON.stringify(result));
 }
 
