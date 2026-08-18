@@ -155,7 +155,8 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 	// Java: for (int i = 0; i < fileCount; i++) {
 	files := make([]model.FileEntry, int(fileCount))
 	var totalExtracted uint64
-	seenTargets := make(map[string]struct{}, int(fileCount))
+	seenTargets := make(map[string]int, int(fileCount))
+	duplicateSkip := make(map[int]bool)
 	for i := uint32(0); i < fileCount; i++ {
 		// Java: int nameLen = buffer.getInt();
 		var nameLen uint32
@@ -198,10 +199,19 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 		if err != nil {
 			return nil, err
 		}
-		if _, exists := seenTargets[target]; exists {
-			return nil, fmt.Errorf("duplicate output path: %s", files[i].Name)
+		if existing, exists := seenTargets[target]; exists {
+			// WeChat plugin packages duplicate metadata entries
+			// (`__extended__/<appid>/plugin.json` appears twice with identical
+			// content). Tolerate identical duplicates — keep the first entry,
+			// skip the copy — but keep rejecting divergent duplicates that
+			// would silently overwrite distinct data.
+			if !sameFileData(data, files[existing], files[i]) {
+				return nil, fmt.Errorf("duplicate output path with differing content: %s", files[i].Name)
+			}
+			duplicateSkip[int(i)] = true
+			continue
 		}
-		seenTargets[target] = struct{}{}
+		seenTargets[target] = int(i)
 	}
 
 	// Use a fixed worker pool so an attacker-controlled file count cannot create
@@ -229,7 +239,10 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 			}
 		}()
 	}
-	for _, file := range files {
+	for index, file := range files {
+		if duplicateSkip[index] {
+			continue
+		}
 		jobs <- file
 	}
 	close(jobs)
@@ -289,6 +302,15 @@ func validateFileBounds(file model.FileEntry, dataLen int) error {
 			file.Name, file.Offset, file.Size, dataLen)
 	}
 	return nil
+}
+
+// sameFileData reports whether two index entries reference byte-identical
+// content. Both entries are assumed to have passed validateFileBounds.
+func sameFileData(data []byte, a, b model.FileEntry) bool {
+	if a.Size != b.Size {
+		return false
+	}
+	return bytes.Equal(data[a.Offset:a.Offset+a.Size], data[b.Offset:b.Offset+b.Size])
 }
 
 func safeOutputPath(outputDir, name string) (string, error) {
