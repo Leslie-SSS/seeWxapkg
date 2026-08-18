@@ -67,7 +67,9 @@ func detectExtractedVariant(extractedDir string, profile *pkg.PackageProfile) er
 			profile.HasPageFrameJS = true
 		case "app-wxss.js":
 			profile.HasAppWxssJS = true
-		case "game.json":
+		case "game.json", "game.js":
+			// Mini-game packages ship game.js (often alongside app-config.json),
+			// with no page-frame/app-wxss renderer sources.
 			profile.IsGamePackage = true
 		}
 

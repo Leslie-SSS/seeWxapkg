@@ -391,6 +391,12 @@ func (s *CompileService) RunTask(ctx context.Context, taskID string) (runErr err
 	status, code, message := determineFinalStatus(manifestVerifyResult, artifactVerifyResult, decompilePartial)
 	switch status {
 	case task.TaskPartial:
+		if t.PackageProfile != nil && t.PackageProfile.IsGamePackage {
+			// Mini-game packages render via Canvas and carry no WXML pages;
+			// the generic "missing WXML" message would mislead.
+			message = fmt.Sprintf("已整理 %d 个源码文件（小游戏包，无 WXML 页面，以 Canvas 渲染）", finalFileCount)
+			break
+		}
 		message = fmt.Sprintf("已整理 %d 个源码文件；%s，详见 recovery-report.json", finalFileCount, message)
 	case task.TaskCompleted:
 		message = fmt.Sprintf("处理完成，共整理 %d 个源码文件", finalFileCount)
