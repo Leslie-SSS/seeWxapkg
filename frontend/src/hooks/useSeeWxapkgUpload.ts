@@ -332,7 +332,13 @@ export function useSeeWxapkgUpload() {
   )
 
   const upload = useCallback(
-    async (file: File, appId?: string, beautify = true, decompile = true) => {
+    async (
+      file: File,
+      appId?: string,
+      beautify = true,
+      decompile = true,
+      removeGuideHtml = true
+    ) => {
       if (uploadInFlightRef.current) return
       uploadInFlightRef.current = true
 
@@ -354,7 +360,7 @@ export function useSeeWxapkgUpload() {
 
       try {
         // 上传文件
-        const response = await api.compile({ file, appId, beautify, decompile })
+        const response = await api.compile({ file, appId, beautify, decompile, removeGuideHtml })
 
         if (operationRef.current !== operation) return
 

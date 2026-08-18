@@ -9,6 +9,10 @@ import (
 type RequestedOptions struct {
 	Beautify  bool `json:"beautify"`
 	Decompile bool `json:"decompile"`
+	// RemoveGuideHTML drops the WeChat 4.x page-entry `*.html` runtime-guide
+	// files from the delivered source tree (they are loader scripts, not
+	// templates). Defaults to true via the frontend checkbox.
+	RemoveGuideHTML bool `json:"removeGuideHtml"`
 }
 
 type ArtifactFile struct {

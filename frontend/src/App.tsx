@@ -14,6 +14,7 @@ function App() {
   const [appId, setAppId] = useState('')
   const [beautify, setBeautify] = useState(true)
   const [decompile, setDecompile] = useState(true)
+  const [removeGuideHtml, setRemoveGuideHtml] = useState(true)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [requiresAppId, setRequiresAppId] = useState(false)
   const errorTitleRef = useRef<HTMLHeadingElement>(null)
@@ -80,7 +81,13 @@ function App() {
 
   const handleStart = () => {
     if (!selectedFile) return
-    void upload(selectedFile, appId.trim() || undefined, beautify, decompile)
+    void upload(
+      selectedFile,
+      appId.trim() || undefined,
+      beautify,
+      decompile,
+      removeGuideHtml
+    )
   }
 
   const handleFileSelect = (file: File | null) => {
@@ -221,6 +228,8 @@ function App() {
                   setBeautify={setBeautify}
                   decompile={decompile}
                   setDecompile={setDecompile}
+                  removeGuideHtml={removeGuideHtml}
+                  setRemoveGuideHtml={setRemoveGuideHtml}
                   requiresAppId={requiresAppId}
                 />
 

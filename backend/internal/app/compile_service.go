@@ -30,10 +30,11 @@ import (
 )
 
 type StartCompileCommand struct {
-	AppID     string
-	Beautify  bool
-	Decompile bool
-	File      *multipart.FileHeader
+	AppID           string
+	Beautify        bool
+	Decompile       bool
+	RemoveGuideHTML bool
+	File            *multipart.FileHeader
 }
 
 type CompileService struct {
@@ -135,8 +136,9 @@ func (s *CompileService) StartTask(ctx context.Context, cmd StartCompileCommand)
 		ID:     uuid.New().String(),
 		Status: task.TaskQueued,
 		RequestedOptions: task.RequestedOptions{
-			Beautify:  cmd.Beautify,
-			Decompile: cmd.Decompile,
+			Beautify:        cmd.Beautify,
+			Decompile:       cmd.Decompile,
+			RemoveGuideHTML: cmd.RemoveGuideHTML,
 		},
 		CreatedAt: createdAt,
 		UpdatedAt: createdAt,
@@ -294,6 +296,14 @@ func (s *CompileService) RunTask(ctx context.Context, taskID string) (runErr err
 	_, err = s.unpack(ctx, t, decryptedData, dirs.SourceDir)
 	if err != nil {
 		return s.markFailed(ctx, t, "unpack_failed", "解包失败", err)
+	}
+	// The user chose to drop WeChat 4.x page-entry `.html` runtime-guide
+	// scaffolds; remove them before any later stage (collect/format/verify)
+	// can touch them, so the delivered tree and ZIP stay source-only.
+	if t.RequestedOptions.RemoveGuideHTML {
+		if err := storage.RemoveGuideHTMLFiles(dirs.SourceDir); err != nil {
+			return s.markFailed(ctx, t, "guide_files_cleanup_failed", "清理运行时引导文件失败", err)
+		}
 	}
 
 	profile, err = s.classify(ctx, t, decryptedData, dirs.SourceDir)

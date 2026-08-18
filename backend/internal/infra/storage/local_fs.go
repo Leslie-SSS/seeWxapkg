@@ -636,3 +636,18 @@ func syncDirectory(path string) error {
 	defer dir.Close()
 	return dir.Sync()
 }
+
+// RemoveGuideHTMLFiles deletes WeChat 4.x page-entry `*.html` runtime-guide
+// scaffolds (loader scripts that reference the recovered wxml/wxss by name)
+// from the recovered source tree when the user opted out of keeping them.
+func RemoveGuideHTMLFiles(sourceDir string) error {
+	return filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		if strings.EqualFold(filepath.Ext(path), ".html") {
+			return os.Remove(path)
+		}
+		return nil
+	})
+}

@@ -9,9 +9,10 @@ import (
 )
 
 type CompileRequestDTO struct {
-	AppID     string `form:"appId"`
-	Beautify  bool   `form:"beautify"`
-	Decompile bool   `form:"decompile"`
+	AppID           string `form:"appId"`
+	Beautify        bool   `form:"beautify"`
+	Decompile       bool   `form:"decompile"`
+	RemoveGuideHTML bool   `form:"removeGuideHtml"`
 }
 
 type CompileResponseDTO struct {

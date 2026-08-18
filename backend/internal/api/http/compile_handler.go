@@ -75,10 +75,11 @@ func (h *CompileHandler) Compile(c *gin.Context) {
 	}
 
 	task, err := h.service.StartTask(c.Request.Context(), app.StartCompileCommand{
-		AppID:     dto.AppID,
-		Beautify:  dto.Beautify,
-		Decompile: dto.Decompile,
-		File:      file,
+		AppID:           dto.AppID,
+		Beautify:        dto.Beautify,
+		Decompile:       dto.Decompile,
+		RemoveGuideHTML: dto.RemoveGuideHTML,
+		File:            file,
 	})
 	if err != nil {
 		log.Printf("[Compile] task creation failed (%T)", err)

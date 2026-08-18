@@ -487,3 +487,37 @@ func TestCleanupDiagnosticSamplesRemovesExpiredOnly(t *testing.T) {
 		t.Fatalf("fresh sample removed: %v", err)
 	}
 }
+
+func TestRemoveGuideHTMLFilesDeletesHtmlOnly(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"pages/a/index.wxml": "<view/>",
+		"pages/a/index.html": "loader script",
+		"pages/a/index.js":   "Page({})",
+		"sub/x.wxml":         "<view/>",
+		"sub/x.html":         "loader",
+	}
+	for rel, content := range files {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RemoveGuideHTMLFiles(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pages", "a", "index.html")); !os.IsNotExist(err) {
+		t.Fatalf("page html must be removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sub", "x.html")); !os.IsNotExist(err) {
+		t.Fatalf("nested html must be removed: %v", err)
+	}
+	for _, keep := range []string{"pages/a/index.wxml", "pages/a/index.js", "sub/x.wxml"} {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(keep))); err != nil {
+			t.Fatalf("non-html file removed: %s (%v)", keep, err)
+		}
+	}
+}

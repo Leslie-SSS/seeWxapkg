@@ -5,6 +5,8 @@ interface CompileRequest {
   appId?: string
   beautify?: boolean
   decompile?: boolean
+  // Remove WeChat 4.x page-entry `*.html` runtime-guide scaffolds.
+  removeGuideHtml?: boolean
 }
 
 export interface ProgressEvent {
@@ -165,6 +167,9 @@ export class ApiClient {
     }
     if (request.decompile !== undefined) {
       formData.append('decompile', request.decompile.toString())
+    }
+    if (request.removeGuideHtml !== undefined) {
+      formData.append('removeGuideHtml', request.removeGuideHtml.toString())
     }
 
     let response: Response

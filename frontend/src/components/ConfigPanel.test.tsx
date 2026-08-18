@@ -7,6 +7,7 @@ function ConfigPanelHarness({ requiresAppId = false }: { requiresAppId?: boolean
   const [appId, setAppId] = useState('')
   const [beautify, setBeautify] = useState(true)
   const [decompile, setDecompile] = useState(true)
+  const [removeGuideHtml, setRemoveGuideHtml] = useState(true)
 
   return (
     <ConfigPanel
@@ -16,6 +17,8 @@ function ConfigPanelHarness({ requiresAppId = false }: { requiresAppId?: boolean
       setBeautify={setBeautify}
       decompile={decompile}
       setDecompile={setDecompile}
+      removeGuideHtml={removeGuideHtml}
+      setRemoveGuideHtml={setRemoveGuideHtml}
       requiresAppId={requiresAppId}
     />
   )
@@ -41,7 +44,7 @@ describe('ConfigPanel', () => {
     expect(screen.getByText('仅加密包需要')).toBeInTheDocument()
 
     const switches = screen.getAllByRole('switch')
-    expect(switches).toHaveLength(2)
+    expect(switches).toHaveLength(3)
     for (const control of switches) {
       expect(control).toHaveClass('h-12', 'w-16')
     }

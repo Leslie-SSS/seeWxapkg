@@ -93,7 +93,7 @@ describe('App connection recovery notice', () => {
     const deepDecompile = screen.getByRole('switch', { name: /深度反编译（推荐）/ })
     expect(deepDecompile).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(screen.getByRole('button', { name: '开始反编译' }))
-    expect(upload).toHaveBeenCalledWith(file, undefined, true, true)
+    expect(upload).toHaveBeenCalledWith(file, undefined, true, true, true)
   })
 
   it('puts a failed task explanation before the retained file and focuses it for recovery', () => {

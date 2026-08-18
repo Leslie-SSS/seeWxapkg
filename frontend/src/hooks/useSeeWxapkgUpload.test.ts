@@ -377,6 +377,7 @@ describe('useSeeWxapkgUpload connection state', () => {
       appId: undefined,
       beautify: true,
       decompile: true,
+      removeGuideHtml: true,
     })
   })
 

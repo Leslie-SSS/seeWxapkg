@@ -7,6 +7,8 @@ interface ConfigPanelProps {
   setBeautify: (value: boolean) => void
   decompile: boolean
   setDecompile: (value: boolean) => void
+  removeGuideHtml: boolean
+  setRemoveGuideHtml: (value: boolean) => void
   requiresAppId?: boolean
   disabled?: boolean
 }
@@ -18,6 +20,8 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
   setBeautify,
   decompile,
   setDecompile,
+  removeGuideHtml,
+  setRemoveGuideHtml,
   requiresAppId = false,
   disabled = false,
 }) => {
@@ -122,6 +126,14 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
           label="深度反编译"
           description="尽量还原页面、逻辑和样式，并标出不确定内容"
           recommended
+        />
+        <OptionSwitch
+          id="removeGuideHtml"
+          checked={removeGuideHtml}
+          onChange={setRemoveGuideHtml}
+          disabled={disabled}
+          label="剔除运行时引导文件"
+          description="移除微信 4.x 页面入口的 .html 引导脚本，只保留 .wxml/.js/.json/.wxss/.wxs 源码"
         />
       </div>
     </section>
