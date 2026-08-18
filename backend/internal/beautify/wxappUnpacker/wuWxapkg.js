@@ -200,9 +200,22 @@ function packDone(dir, cb, order) {
                 // WeChat 4.x main packages ship page-frame.js as the renderer
                 // source; app-wxss.js may exist as a stylesheet-only bundle and
                 // must not shadow the renderer registry, so page-frame.js takes
-                // priority over it.
+                // priority over it. Some 4.x builds ship a placeholder
+                // page-frame.js with the real registry in app-wxss.js, so an
+                // empty frame falls back to app-wxss.js.
+                const framePath = path.resolve(dir, "page-frame.js");
                 weappEvent.encount();
-                wuMl.doFrame(path.resolve(dir, "page-frame.js"), doBack, order, mainDir);
+                wuMl.doFrame(framePath, (result) => {
+                    doBack(result);
+                    if (result && result.empty) {
+                        const wxssPath = path.resolve(dir, "app-wxss.js");
+                        if (fs.existsSync(wxssPath)) {
+                            console.log('page-frame.js was a placeholder; falling back to app-wxss.js');
+                            weappEvent.encount();
+                            wuMl.doFrame(wxssPath, doBack, order, mainDir);
+                        }
+                    }
+                }, order, mainDir);
                 console.log('deal page-frame.js ok');
             } else if (fs.existsSync(path.resolve(dir, "app-wxss.js"))) {
                 weappEvent.encount();

@@ -911,6 +911,11 @@ function doFrame(name, cb, order, mainDir) {
             }
             if (Object.keys(rE).length === 0) {
                 diagnostics.partial('fallback.wxml.no_static_entries', 'No statically recoverable WXML renderer entries were found; runtime bundle was preserved.', name);
+                // Signal an empty frame so the caller can fall back to another
+                // renderer source (4.x main packages may ship a placeholder
+                // page-frame.js with the real registry in app-wxss.js).
+                cb({[name]: 4, empty: true});
+                return;
             }
             cb({[name]: 4});
         });

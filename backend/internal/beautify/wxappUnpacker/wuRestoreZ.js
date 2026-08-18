@@ -122,13 +122,20 @@ function catchZGroup(code, groupPreStr, cb) {
 			diagnostics.partial('fallback.wxml.group_opcode_parse_failed', `Unable to statically recover grouped WXML opcodes: ${error.message}`);
 			console.warn('Unable to statically recover grouped WXML opcodes:', error.message);
 		}
-		zArr[preStr.match(/function gz\$gwx(\d*\_\d+)/)[1]] = z;
+		// The renderer selects the group via the callee name suffix
+		// (`gz$gwx_1` -> `_1`), so the key must match that suffix exactly.
+		// WeChat 4.x emits both `gz$gwx_1` and `gz$gwx12_34` shapes.
+		const suffixMatch = preStr.match(/function gz\$gwx([a-zA-Z0-9_]+)/);
+		zArr[suffixMatch ? suffixMatch[1] : '0'] = z;
 	}
 	cb({"mul": zArr});
 }
 
 function catchZ(code, cb) {
-	let groupTest = code.match(/function gz\$gwx(\d*\_\d+)\(\)\{\s*if\( __WXML_GLOBAL__\.ops_cached\.\$gwx\d*\_\d+\)/g);
+	// WeChat 4.x groups its z-tables per page/component under
+	// `function gz$gwx_1(){...}` (and `gz$gwx12_34` variants); the classic
+	// shape required a digit-underscore-digit suffix and never matched.
+	let groupTest = code.match(/function gz\$gwx([a-zA-Z0-9_]+)\(\)\{\s*if\( __WXML_GLOBAL__\.ops_cached\.\$gwx/g);
 	if (groupTest !== null) return catchZGroup(code, groupTest, cb);
 	let z = [];
 	let lastPtr = code.lastIndexOf("(z);__WXML_GLOBAL__.ops_set.$gwx=z;");
