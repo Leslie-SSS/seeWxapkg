@@ -80,6 +80,33 @@ test('server returns original content for oversized payloads', async () => {
   }
 });
 
+test('server skips large JavaScript before it enters a worker', async () => {
+  const server = createServer({
+    deobfuscateEnabled: false,
+    formatMaxContentSize: 16,
+    maxContentSize: 1024,
+    workerCount: 1,
+  });
+  const address = await listen(server);
+  const content = 'const value = ' + '1'.repeat(32);
+
+  try {
+    const response = await fetch(`http://${address.address}:${address.port}/beautify`, {
+      body: JSON.stringify({ content, filename: 'common/game.js', type: 'javascript' }),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.equal(payload.success, true);
+    assert.equal(payload.status, 'skipped');
+    assert.equal(payload.content, content);
+    assert.match(payload.warning, /safe formatter/);
+  } finally {
+    await close(server);
+  }
+});
+
 test('server enforces the content limit in UTF-8 bytes', async () => {
   const server = createServer({
     deobfuscateEnabled: false,

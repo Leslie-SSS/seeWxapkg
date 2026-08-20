@@ -51,6 +51,40 @@ func buildDuplicatedWxapkg(t *testing.T, names []string, contents [][]byte) []by
 	return out
 }
 
+func buildSharedRuntimeAliasWxapkg(t *testing.T) []byte {
+	t.Helper()
+	names := []string{"app.json", "appservice.app.js", "__extended__/wx1234567890abcdef/appservice.js"}
+	appConfig := []byte(`{"pages":[]}`)
+	appService := bytes.Repeat([]byte("x"), 64)
+	indexLen := 4
+	for _, name := range names {
+		indexLen += 4 + len(name) + 8
+	}
+	dataStart := uint32(14 + indexLen)
+	aliasOffset := dataStart + uint32(len(appConfig))
+
+	var index bytes.Buffer
+	_ = binary.Write(&index, binary.BigEndian, uint32(len(names)))
+	writeEntry := func(name string, offset, size uint32) {
+		_ = binary.Write(&index, binary.BigEndian, uint32(len(name)))
+		index.WriteString(name)
+		_ = binary.Write(&index, binary.BigEndian, offset)
+		_ = binary.Write(&index, binary.BigEndian, size)
+	}
+	writeEntry(names[0], dataStart, uint32(len(appConfig)))
+	writeEntry(names[1], aliasOffset, uint32(len(appService)))
+	writeEntry(names[2], aliasOffset, uint32(len(appService)))
+
+	body := append(append([]byte{}, appConfig...), appService...)
+	var header bytes.Buffer
+	header.WriteByte(0xBE)
+	_ = binary.Write(&header, binary.BigEndian, uint32(0))
+	_ = binary.Write(&header, binary.BigEndian, uint32(indexLen))
+	_ = binary.Write(&header, binary.BigEndian, uint32(len(body)))
+	header.WriteByte(0xED)
+	return append(append(header.Bytes(), index.Bytes()...), body...)
+}
+
 func TestSameFileData(t *testing.T) {
 	data := []byte("0123456701234567")
 	a := model.FileEntry{Offset: 0, Size: 4, Name: "a"}
@@ -87,6 +121,25 @@ func TestUnpackToleratesIdenticalDuplicatePaths(t *testing.T) {
 	}
 	if !bytes.Equal(out, payload) {
 		t.Fatalf("plugin.json content mismatch")
+	}
+}
+
+func TestUnpackToleratesSharedWeChatRuntimeAlias(t *testing.T) {
+	data := buildSharedRuntimeAliasWxapkg(t)
+	outDir := t.TempDir()
+	result, err := UnpackWxapkg(data, outDir, false)
+	if err != nil {
+		t.Fatalf("shared runtime alias must be tolerated: %v", err)
+	}
+	if result.FileCount != 3 {
+		t.Fatalf("expected 3 entries, got %d", result.FileCount)
+	}
+	alias, err := os.ReadFile(filepath.Join(outDir, "__extended__", "wx1234567890abcdef", "appservice.js"))
+	if err != nil {
+		t.Fatalf("runtime alias must be written: %v", err)
+	}
+	if !bytes.Equal(alias, bytes.Repeat([]byte("x"), 64)) {
+		t.Fatalf("runtime alias content mismatch")
 	}
 }
 

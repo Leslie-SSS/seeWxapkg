@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,11 @@ type Config struct {
 	FailureThreshold int
 	Deobfuscate      bool
 }
+
+const (
+	defaultFormatMaxFileSize = 4 * 1024 * 1024
+	defaultWorkerMemoryMB    = 384
+)
 
 // ConfigFromParams creates a Config from individual parameters
 func ConfigFromParams(enabled bool, timeoutSeconds, maxFileSize, failureLimit int, deobfuscate bool) Config {
@@ -198,6 +204,8 @@ func (s *Service) startServer(beautifyDir string, port int) error {
 	if s.deobfuscate {
 		deobfuscateStr = "true"
 	}
+	formatMaxFileSize := positiveEnvInt("BEAUTIFY_FORMAT_MAX_FILE_SIZE", defaultFormatMaxFileSize)
+	workerMemoryMB := positiveEnvInt("BEAUTIFY_WORKER_MEMORY_MB", defaultWorkerMemoryMB)
 	// The pool size is operator-tunable (fewer workers lower peak memory);
 	// the container env wins over the baked default of two.
 	workers := os.Getenv("BEAUTIFY_WORKERS")
@@ -208,6 +216,8 @@ func (s *Service) startServer(beautifyDir string, port int) error {
 		fmt.Sprintf("BEAUTIFY_PORT=%d", port),
 		"BEAUTIFY_HOST=127.0.0.1",
 		fmt.Sprintf("MAX_CONTENT_SIZE=%d", s.maxFileSize),
+		fmt.Sprintf("BEAUTIFY_FORMAT_MAX_FILE_SIZE=%d", formatMaxFileSize),
+		fmt.Sprintf("BEAUTIFY_WORKER_MEMORY_MB=%d", workerMemoryMB),
 		fmt.Sprintf("BEAUTIFY_JOB_TIMEOUT_MS=%d", s.timeout.Milliseconds()),
 		"BEAUTIFY_QUEUE_SIZE=32",
 		fmt.Sprintf("BEAUTIFY_WORKERS=%s", workers),
@@ -244,6 +254,14 @@ func (s *Service) startServer(beautifyDir string, port int) error {
 			}
 		}
 	}
+}
+
+func positiveEnvInt(name string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 // checkHealth checks if the beautification server is healthy

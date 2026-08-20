@@ -155,6 +155,8 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 	// Java: for (int i = 0; i < fileCount; i++) {
 	files := make([]model.FileEntry, int(fileCount))
 	var totalExtracted uint64
+	maxReferencedEnd := uint64(indexEnd)
+	runtimeAliasSeen := false
 	seenTargets := make(map[string]int, int(fileCount))
 	duplicateSkip := make(map[int]bool)
 	for i := uint32(0); i < fileCount; i++ {
@@ -191,10 +193,7 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 		if err := validateFileBounds(files[i], len(data)); err != nil {
 			return nil, err
 		}
-		totalExtracted += uint64(files[i].Size)
-		if totalExtracted > uint64(len(data)) {
-			return nil, fmt.Errorf("declared extracted data exceeds package size")
-		}
+		fileEnd := uint64(files[i].Offset) + uint64(files[i].Size)
 		target, err := safeOutputPath(outputDir, files[i].Name)
 		if err != nil {
 			return nil, err
@@ -210,6 +209,27 @@ func UnpackWxapkg(data []byte, outputDir string, beautify bool) (*UnpackResult, 
 			}
 			duplicateSkip[int(i)] = true
 			continue
+		}
+
+		// Some WeChat runtimes add an app-service.js/appservice.js alias that
+		// points back into an already indexed body range. It is a view of an
+		// existing payload, not an extraction amplification. Keep the allowance
+		// narrow: one known runtime alias, fully contained in a prior range.
+		isRuntimeAlias := !runtimeAliasSeen &&
+			uint64(files[i].Offset) < maxReferencedEnd &&
+			fileEnd <= maxReferencedEnd &&
+			uint64(files[i].Offset) >= indexEnd &&
+			isSharedRuntimeAlias(files[i].Name)
+		if !isRuntimeAlias {
+			totalExtracted += uint64(files[i].Size)
+			if totalExtracted > uint64(len(data)) {
+				return nil, fmt.Errorf("declared extracted data exceeds package size")
+			}
+		} else {
+			runtimeAliasSeen = true
+		}
+		if fileEnd > maxReferencedEnd {
+			maxReferencedEnd = fileEnd
 		}
 		seenTargets[target] = int(i)
 	}
@@ -311,6 +331,11 @@ func sameFileData(data []byte, a, b model.FileEntry) bool {
 		return false
 	}
 	return bytes.Equal(data[a.Offset:a.Offset+a.Size], data[b.Offset:b.Offset+b.Size])
+}
+
+func isSharedRuntimeAlias(name string) bool {
+	base := strings.ToLower(filepath.Base(filepath.ToSlash(name)))
+	return base == "app-service.js" || base == "appservice.js"
 }
 
 func safeOutputPath(outputDir, name string) (string, error) {

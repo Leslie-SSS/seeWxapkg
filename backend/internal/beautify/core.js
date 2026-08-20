@@ -5,10 +5,15 @@ const deobfuscatePlugin = require('./plugins/deobfuscate');
 const wechatPlugin = require('./plugins/wechat');
 
 const DEFAULT_MAX_CONTENT_SIZE = parsePositiveInteger(process.env.MAX_CONTENT_SIZE, 512000);
+const DEFAULT_FORMAT_MAX_CONTENT_SIZE = parsePositiveInteger(
+  process.env.BEAUTIFY_FORMAT_MAX_FILE_SIZE,
+  4 * 1024 * 1024
+);
 const DEFAULT_DEOBFUSCATE_ENABLED = process.env.DEOBFUSCATE_ENABLED === 'true';
 const DEFAULT_JOB_TIMEOUT_MS = parsePositiveInteger(process.env.BEAUTIFY_JOB_TIMEOUT_MS, 4000);
 const DEFAULT_QUEUE_SIZE = parsePositiveInteger(process.env.BEAUTIFY_QUEUE_SIZE, 32);
 const DEFAULT_WORKER_COUNT = parsePositiveInteger(process.env.BEAUTIFY_WORKERS, 2);
+const DEFAULT_WORKER_MEMORY_MB = parsePositiveInteger(process.env.BEAUTIFY_WORKER_MEMORY_MB, 384);
 
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value || '', 10);
@@ -20,10 +25,29 @@ function getRuntimeConfig(overrides = {}) {
     deobfuscateEnabled: DEFAULT_DEOBFUSCATE_ENABLED,
     jobTimeoutMs: DEFAULT_JOB_TIMEOUT_MS,
     maxContentSize: DEFAULT_MAX_CONTENT_SIZE,
+    formatMaxContentSize: DEFAULT_FORMAT_MAX_CONTENT_SIZE,
     queueSize: DEFAULT_QUEUE_SIZE,
     workerCount: DEFAULT_WORKER_COUNT,
+    workerMemoryMb: DEFAULT_WORKER_MEMORY_MB,
     ...overrides,
   };
+}
+
+function isJavaScriptType(type) {
+  return type === 'javascript' || type === 'js' || type === 'wxs';
+}
+
+function resolvedType(type, content, filename) {
+  if (isJavaScriptType(type) || type === 'html' || type === 'wxml' || type === 'css' || type === 'wxss' || type === 'json') {
+    return type;
+  }
+  return detectFileType(content, filename);
+}
+
+function shouldSkipLargeFormatting(content, type, filename, config = getRuntimeConfig()) {
+  const detectedType = resolvedType(type, content, filename);
+  return isJavaScriptType(detectedType) &&
+    Buffer.byteLength(content, 'utf8') > config.formatMaxContentSize;
 }
 
 function detectFileType(content, filename = '') {
@@ -355,7 +379,15 @@ async function beautifyCSS(content) {
 }
 
 async function beautify(content, type, filename = '', config = getRuntimeConfig()) {
-  switch (type) {
+  const effectiveType = resolvedType(type, content, filename);
+  if (shouldSkipLargeFormatting(content, effectiveType, filename, config)) {
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    return createResult('skipped', content, {
+      warning: `JavaScript content too large for safe formatter (${contentBytes} bytes), original preserved`,
+    });
+  }
+
+  switch (effectiveType) {
     case 'javascript':
     case 'js':
     case 'wxs':
@@ -368,14 +400,8 @@ async function beautify(content, type, filename = '', config = getRuntimeConfig(
       return beautifyCSS(content);
     case 'json':
       return createResult('unchanged', content);
-    default: {
-      const detectedType = detectFileType(content, filename);
-      if (detectedType !== 'unknown') {
-        return beautify(content, detectedType, filename, config);
-      }
-
+    default:
       return createResult('skipped', content, { warning: 'Unknown file type; content preserved' });
-    }
   }
 }
 
@@ -386,4 +412,5 @@ module.exports = {
   beautifyJS,
   createResult,
   getRuntimeConfig,
+  shouldSkipLargeFormatting,
 };

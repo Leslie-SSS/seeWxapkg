@@ -9,7 +9,7 @@
 const http = require('http');
 const { isMainThread, parentPort, Worker } = require('worker_threads');
 
-const { beautify, createResult, getRuntimeConfig } = require('./core');
+const { beautify, createResult, getRuntimeConfig, shouldSkipLargeFormatting } = require('./core');
 
 const PORT = Number.parseInt(process.env.BEAUTIFY_PORT || '3001', 10);
 const HOST = process.env.BEAUTIFY_HOST || '127.0.0.1';
@@ -25,8 +25,10 @@ function normalizeConfig(input = {}) {
     ...input,
     jobTimeoutMs: positiveInteger(input.jobTimeoutMs, defaults.jobTimeoutMs),
     maxContentSize: positiveInteger(input.maxContentSize, defaults.maxContentSize),
+    formatMaxContentSize: positiveInteger(input.formatMaxContentSize, defaults.formatMaxContentSize),
     queueSize: positiveInteger(input.queueSize, defaults.queueSize),
     workerCount: positiveInteger(input.workerCount, defaults.workerCount),
+    workerMemoryMb: positiveInteger(input.workerMemoryMb, defaults.workerMemoryMb),
   };
 }
 
@@ -111,7 +113,11 @@ class BeautifyWorkerPool {
 
   spawn() {
     if (this.closed) return;
-    const worker = new Worker(__filename);
+    const worker = new Worker(__filename, {
+      resourceLimits: {
+        maxOldGenerationSizeMb: this.config.workerMemoryMb,
+      },
+    });
     worker.unref();
     const slot = { busy: false, job: null, worker, replacing: false };
     this.slots.add(slot);
@@ -275,6 +281,13 @@ async function handleBeautifyRequest(req, res, config, pool) {
     return;
   }
 
+  if (shouldSkipLargeFormatting(content, type, filename, config)) {
+    writeJson(res, 200, createResult('skipped', content, {
+      warning: `JavaScript content too large for safe formatter (${contentBytes} bytes), original preserved`,
+    }));
+    return;
+  }
+
   try {
     const result = await pool.submit({ content, filename, type });
     writeJson(res, 200, result);
@@ -338,8 +351,9 @@ if (require.main === module && isMainThread) {
   server.listen(PORT, HOST, () => {
     console.log(`Beautify service running on http://${HOST}:${PORT}`);
     console.log(`Max content size: ${config.maxContentSize} bytes`);
+    console.log(`Safe JS format size: ${config.formatMaxContentSize} bytes`);
     console.log(`Deobfuscation: ${config.deobfuscateEnabled ? 'enabled' : 'disabled'}`);
-    console.log(`Workers: ${config.workerCount}; queue: ${config.queueSize}; timeout: ${config.jobTimeoutMs}ms`);
+    console.log(`Workers: ${config.workerCount}; worker heap: ${config.workerMemoryMb} MiB; queue: ${config.queueSize}; timeout: ${config.jobTimeoutMs}ms`);
   });
 
   const shutdown = signal => {
